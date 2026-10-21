@@ -372,10 +372,10 @@ function renderResults(session) {
 function agentLabel(agent) {
   if (!agent) return null;
   const effort = agent.effort ? ` · effort ${agent.effort}` : '';
-  if (agent.cli !== 'claude') return agent.cli + effort;
+  if (agent.cli === 'codex') return agent.cli + effort;
   const account = agent.provider === 'claude-login'
     ? ` · ${agent.account || 'no experiment token'}${agent.pending ? ' (at launch)' : ''}` : '';
-  return `claude · ${agent.provider}${account}${effort}`;
+  return `${agent.cli} · ${agent.provider}${account}${effort}`;
 }
 
 function renderResearch() {

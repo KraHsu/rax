@@ -54,9 +54,10 @@ is an error that names the reason, for example
 | `--episodes` | 5 | Exploration episodes (1..1000; the dashboard allows 2..1000). Each rehearsal uses one |
 | `--exploration-envs` | 1 | Simulator environments the agent can use at once (1..8); see [section 5](#5-parallel-exploration-and-subagents) |
 | `--subagents` | 0 | Concurrent subagents (0..8). 0 means one per environment when there are several, none with one |
-| `--agent-cli` | `codex` | `codex` or `claude` |
-| `--agent-provider` | `openrouter` | Claude Code's model provider: `openrouter`, `claude-login` or `anthropic` ([Setup, step 5](SETUP.md#5-agent-cli-and-model-credentials)). Codex uses its provider profile instead |
+| `--agent-cli` | `codex` | `codex`, `claude`, `dsh` or `kimi` |
+| `--agent-provider` | `openrouter` | Provider for the selected harness: OpenRouter, vendor API, vendor account or `custom`; see [Agent harnesses](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md). Codex uses its provider profile |
 | `--agent-effort` | `xhigh` | Reasoning effort, `xhigh` or `max`, for the agent and its formal copies |
+| `--external-perception` | `on` | `off` removes the external Gemini tool and disables its credential loading; use the agent model's own vision |
 | `--observation-profile` | `rgbd` | `rgbd`, or `rgb-only` (no depth or camera geometry) |
 | `--expert-demonstrations` | 0 | Expert episodes shown read-only to the exploring agent: 0 or 3 ([Setup, step 6](SETUP.md#6-expert-episodes-optional)) |
 | `--expert-content` | `full` | What they hold: `full` (commanded references, measured motion, object states, camera) or `images` (front-camera video, previews and depth only) |
@@ -103,8 +104,14 @@ Other launcher flags:
 | `--profile <name>` | Codex provider profile (default: the name in `<CODEX_HOME>/experiment-profile`, else `openrouter`) |
 | `--provider-home <dir>` | Where provider profiles live (default: `$CODEX_HOME`, else `~/.codex`) |
 | `--key-file <file>` | OpenRouter key file (default: `~/.codex/secrets/openrouter_api_key` when it exists). Without one, `OPENROUTER_API_KEY` serves Gemini and Claude Code's `openrouter` provider; a Codex OpenRouter session needs the file |
+| `--agent-binary <file>` | DSH/Kimi: installed CLI executable |
+| `--agent-model <id>` | DSH/Kimi: override the provider's default model |
+| `--agent-key-file <file>` | DSH/Kimi: private API key file; keep it outside the checkout |
+| `--agent-base-url <url>` | DSH/Kimi `custom`: compatible model endpoint |
+| `--agent-auth-home <dir>` | DSH/Kimi account: dedicated vendor login directory outside the checkout |
 | `--claude-key-file <file>` | Claude `anthropic` provider: an API key file (else `ANTHROPIC_API_KEY`). `claude-login`: a token file other than the experiment token |
-| `--claude-model <id>` | Claude: override the provider's default model |
+| `--claude-model <id>` | Claude: override the provider's default model. Non-Claude OpenRouter models also replace its auxiliary model aliases |
+| `--claude-base-url <url>` | `custom` provider: an Anthropic-compatible endpoint; use `--claude-key-file` for its bearer credential |
 | `--prepare-only` | Deploy the workspace and the CLI's session configuration (its sandbox included) and print their paths, then stop without a model call or episode. This uses up the configuration; prepare a new one to run |
 
 Dashboard launches use the defaults of these flags, read in the dashboard's own
@@ -338,3 +345,14 @@ spend. Without an OpenRouter key every call answers `Gemini is not configured`.
 | `--agent-formal needs --resume of a session whose exploration has closed` | The session's exploration is still open; resume it normally |
 | `Session predates this dashboard server` | Tick **Earlier runs** to review it; launch and resume it from the terminal |
 | `formal.json`: `exploration_incomplete` | The agent stopped with episodes left; resume the session |
+
+## DeepSeek Harness and Kimi Code
+
+Select `--agent-cli dsh` or `--agent-cli kimi` when preparing a session.
+Both adapters support one exploration environment, no subagents and code formal
+evaluation. Set `--agent-effort max` for maximum reasoning.
+
+The [agent harness guide](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md)
+covers installation, OpenRouter, vendor API keys, account login and compatible
+endpoints. Pass credentials to the launcher with `--agent-key-file` for API
+access or `--agent-auth-home` for account access.
