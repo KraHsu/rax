@@ -644,7 +644,13 @@ def main():
                         help='anthropic: an API key file; claude-login: override the experiment setup-token '
                              'file (default: harness/claude_cli/experiment_login.py). The personal '
                              '~/.claude login is always refused.')
-    parser.add_argument('--claude-model', help='Override the provider default (Opus 5.5)')
+    parser.add_argument('--claude-model', help='Override the provider default model')
+    parser.add_argument('--claude-base-url', help='Anthropic-compatible endpoint for the custom provider')
+    parser.add_argument('--agent-binary', type=Path, help='Native third-party agent CLI executable')
+    parser.add_argument('--agent-model', help='Model override for the native agent backend')
+    parser.add_argument('--agent-key-file', type=Path, help='Private model key file for the native agent backend')
+    parser.add_argument('--agent-base-url', help='Private model API base URL')
+    parser.add_argument('--agent-auth-home', type=Path, help='Dedicated native agent account login directory')
     args = parser.parse_args()
     if args.prepare_only and (args.resume or args.formal_only or args.agent_formal):
         parser.error('--prepare-only checks a fresh deployment; it cannot be combined with --resume, '
@@ -704,18 +710,29 @@ def main():
         try:
             if config.agent_cli == 'claude':
                 from harness.claude_cli import auto_research as claude
+            elif config.agent_cli not in ('codex', 'claude'):
+                from harness.backends import get
+                external_cli = get(config.agent_cli)
+                if args.agent_formal or args.formal_only:
+                    raise ValueError(f'{config.agent_cli} supports code formal; live agent formal is not implemented')
             if args.resume:
                 if config.agent_cli == 'claude' and config.agent_provider == 'claude-login' and not args.claude_key_file:
-                    claude.preflight_login()  # The token may have been revoked since.
-                deployed = (claude.redeploy(config) if config.agent_cli == 'claude' else redeploy(config))
+                    claude.preflight_login()  # The token may have been revoked since the first launch.
+                deployed = (external_cli.redeploy(config, binary=args.agent_binary) if config.agent_cli not in ('codex', 'claude') else
+                            claude.redeploy(config) if config.agent_cli == 'claude' else redeploy(config))
+            elif config.agent_cli not in ('codex', 'claude'):
+                deployed = external_cli.deploy(config, binary=args.agent_binary, model=args.agent_model,
+                    key_file=args.agent_key_file or args.key_file, base_url=args.agent_base_url,
+                    auth_home=args.agent_auth_home)
             elif config.agent_cli == 'claude':
                 provider = config.agent_provider
                 key_file = {'openrouter': args.key_file, 'anthropic': args.claude_key_file,
-                            'claude-login': args.claude_key_file}[provider]
+                            'claude-login': args.claude_key_file, 'custom': args.claude_key_file}[provider]
                 if provider == 'claude-login' and not args.claude_key_file:
                     # Fail before provisioning if the session's experiment token is missing or rejected.
                     claude.preflight_login()
-                deployed = claude.deploy(config, provider=provider, model=args.claude_model, key_file=key_file)
+                deployed = claude.deploy(config, provider=provider, model=args.claude_model, key_file=key_file,
+                                        base_url=args.claude_base_url)
             else:
                 deployed = deploy(config, provider_home=args.provider_home, profile=args.profile, key_file=args.key_file)
             if args.prepare_only:
@@ -752,7 +769,9 @@ def main():
                 if recovered:
                     lifecycle.setdefault('interrupted_episodes', []).extend(recovered)
                     persist(record, lifecycle)
-                home = deployed.get('claude_home' if config.agent_cli == 'claude' else 'codex_home')
+                from harness.backends import get
+                cli = get(config.agent_cli)
+                home = deployed.get(cli.HOME_KEY)
                 def agent_runs(run):
                     """Every agent run of this launcher, against one frontend: open episodes outlive a run."""
                     def start(prompt):
@@ -763,11 +782,14 @@ def main():
                     return run_agent(
                         start, deployed=deployed, prompt=prompt, interactive=interactive,
                         open_exploration=lambda: not exploration_closed(config),
-                        latest=lambda: (claude.latest_session if config.agent_cli == 'claude' else latest_session)(home),
-                        last_error=lambda: (claude.last_error(home) if config.agent_cli == 'claude'
+                        latest=lambda: cli.latest_session(home),
+                        last_error=lambda: (cli.last_error(home) if config.agent_cli != 'codex'
                                             else deployed.get('agent_error')),
                         lifecycle=lifecycle, save=lambda: persist(record, lifecycle))
-                if config.agent_cli == 'claude':
+                if config.agent_cli not in ('codex', 'claude'):
+                    returncode = external_cli.launch(config, deployed, gemini_key_file=args.key_file, prompt=prompt,
+                                           interactive=interactive, agent_runs=agent_runs).returncode
+                elif config.agent_cli == 'claude':
                     returncode = claude.launch(config, deployed, gemini_key_file=args.key_file, prompt=prompt,
                                                interactive=interactive, calls_file=config.root/CALLS_FILE,
                                                on_wait=usage_wait, agent_runs=agent_runs).returncode
@@ -801,6 +823,9 @@ def record_subagents(config, deployed):
     """Subagent spawn/concurrency record for the multi-agent baseline (best effort)."""
     from services import subagent_metrics
     from services.mcp_contract import Contract
+    if config.agent_cli not in ('codex', 'claude'):
+        from harness.backends import get
+        return get(config.agent_cli).record_subagents(config, deployed)
     claude = config.agent_cli == 'claude'
     home = deployed.get('claude_home' if claude else 'codex_home')
     if home:

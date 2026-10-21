@@ -48,6 +48,7 @@ PROVIDERS = {
     'claude-login': {'base_url': 'https://api.anthropic.com', 'model': 'claude-opus-5-5',
                      'auditor': 'claude-haiku-4-5-20251001', 'fast': 'claude-haiku-4-5-20251001'},
 }
+PROVIDERS['custom'] = {'base_url': None, 'model': 'deepseek-flash', 'auditor': 'deepseek-flash', 'fast': 'deepseek-flash'}
 ROUTES = {'/v1/messages': True, '/v1/messages/count_tokens': False}  # path -> counts as a model call
 # Requests and responses pass through whole, as between Claude Code and its provider natively
 # (see the Codex relay). The relay replaces only the client's placeholder credential.
@@ -76,10 +77,13 @@ def personal_login(path):
 class Credential:
     """Provider auth headers, resolved per request so a rotated token applies at once."""
 
-    def __init__(self, provider, *, key_file=None):
+    def __init__(self, provider, *, key_file=None, base_url=None):
         if provider not in PROVIDERS:
             raise ValueError(f'Unknown provider {provider!r}; choose from {sorted(PROVIDERS)}')
         self.provider, self.key_file = provider, key_file
+        if provider == 'custom':
+            from harness.claude_cli.login import Credential as NativeCredential
+            self.native = NativeCredential(provider, key_file=key_file, base_url=base_url)
         if provider == 'claude-login':
             if not key_file:
                 raise ValueError('claude-login needs the experiment setup-token file; '
@@ -99,6 +103,8 @@ class Credential:
         return token
 
     def headers(self):
+        if self.provider == 'custom':
+            return self.native.headers()
         if self.provider == 'anthropic':
             key = _private_text(self.key_file).strip() if self.key_file else os.environ.get('ANTHROPIC_API_KEY', '')
             if not key:
@@ -221,7 +227,7 @@ def usage_reset(response):
 
 class MessagesRelay:
     def __init__(self, path, credential, *, base_url, models, client_write_timeout=120,
-                 usage_log=None, calls_file=None, slots=MIN_SLOTS):
+                 usage_log=None, calls_file=None, slots=MIN_SLOTS, allow_private_http=False):
         allowed = set()
         for model in models:
             if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
@@ -230,7 +236,7 @@ class MessagesRelay:
         url = urlsplit(base_url)
         if url.scheme not in {'https', 'http'} or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError('Invalid operator model endpoint')
-        if url.scheme == 'http' and url.hostname not in {'127.0.0.1', 'localhost', '::1'}:
+        if url.scheme == 'http' and not allow_private_http and url.hostname not in {'127.0.0.1', 'localhost', '::1'}:
             raise ValueError('Non-TLS endpoint is only allowed for local tests')
         self.url, self.credential = url, credential
         self.counter, self.lock = CallCounter(calls_file), threading.Lock()

@@ -1,0 +1,34 @@
+{
+  "account": "YOUR_SLURM_ACCOUNT",
+  "prepare": {
+    "partition": "shared",
+    "cpus": 8,
+    "memory": "32G",
+    "walltime": "08:00:00"
+  },
+  "serve": {
+    "partition": "YOUR_H200_PARTITION",
+    "cpus": 48,
+    "memory": "1024G",
+    "walltime": "24:00:00",
+    "gpus": "nvidia_h200:4"
+  },
+  "test": {
+    "partition": "shared",
+    "cpus": 2,
+    "memory": "4G",
+    "walltime": "04:00:00"
+  },
+  "experiment": {
+    "partition": "YOUR_RTX_PARTITION",
+    "cpus": 12,
+    "memory": "96G",
+    "walltime": "24:00:00",
+    "gpus": "nvidia_rtx_pro_6000_blackwell_server_edition:1"
+  },
+  "experiment_args": [
+    "--task",
+    "click_mouse"
+  ],
+  "storage_group": "YOUR_STORAGE_GROUP"
+}

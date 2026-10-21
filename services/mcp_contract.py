@@ -77,6 +77,7 @@ class Contract:
     # Live-copy mode (agent formal) evaluates live copies of the agent instead, so
     # exploration has no bundle tools.
     bundle_tools: bool = True
+    external_perception: bool = True
 
     def __post_init__(self):
         if self.benchmark not in BENCHMARKS:
@@ -94,6 +95,8 @@ class Contract:
             raise ValueError('Subagents are exploration-only')
         if type(self.bundle_tools) is not bool:
             raise ValueError('bundle_tools must be a boolean')
+        if type(self.external_perception) is not bool:
+            raise ValueError('external_perception must be a boolean')
 
     @classmethod
     def from_config(cls, config, *, isolated=False):
@@ -102,7 +105,8 @@ class Contract:
                    1 if isolated else getattr(config, 'exploration_envs', 1),
                    0 if isolated else getattr(config, 'subagents', 0),
                    getattr(config, 'benchmark', DEFAULT),
-                   isolated or not getattr(config, 'agent_formal', False))
+                   isolated or not getattr(config, 'agent_formal', False),
+                   getattr(config, 'external_perception', True))
 
     @property
     def subagent_cap(self):
@@ -156,7 +160,7 @@ class Contract:
         return self.select(self.bench.definitions(), scoped=self.robot_names - self.bench.unscoped_tools)
 
     def require_robot(self, name, arguments):
-        if name not in self.robot_names and name != 'gemini_generate':
+        if name not in self.robot_names and (name != 'gemini_generate' or not self.external_perception):
             raise PermissionError('Tool is not available in this MCP contract')
         if not isinstance(arguments, dict):
             raise ValueError('Arguments must be an object')
@@ -193,12 +197,13 @@ class Contract:
     @property
     def tool_names(self):
         """Every MCP tool this contract exposes."""
-        return frozenset(self.robot_names | self.lifecycle_tools | {'gemini_generate'})
+        return frozenset(self.robot_names | self.lifecycle_tools |
+                         ({'gemini_generate'} if self.external_perception else set()))
 
     def manifest(self):
         manifest = {'mode': MODE, 'phase': self.phase, 'observation_profile': self.observation_profile,
                     'exploration_envs': self.environments, 'subagents': self.subagent_cap, 'robot_tools': sorted(self.robot_names),
-                    'gemini': True, 'benchmark': self.benchmark}
+                    'gemini': self.external_perception, 'benchmark': self.benchmark}
         return manifest
 
 def observation_for(service):

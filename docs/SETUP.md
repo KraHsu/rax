@@ -100,6 +100,8 @@ want them in a shell.
 
 ## 4. Agent image
 
+For DeepSeek Harness or Kimi Code, follow the [agent harness guide](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md) after installing the host dependencies.
+
 ```bash
 runtime/envs/host/bin/python scripts/build_agent_image.py
 ```
