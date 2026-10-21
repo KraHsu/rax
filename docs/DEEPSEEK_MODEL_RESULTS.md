@@ -13,6 +13,8 @@ four of the six tasks reach **100%** success.
 
 ## DexJoCo comparison
 
+![RAX with DeepSeek V4.1-Flash and Claude Opus 5.5 on DexJoCo](assets/deepseek-dexjoco-results.png)
+
 Success rates (%) on the official `rand-obj` evaluation layouts.
 
 | Method | All tasks | Single arm |
