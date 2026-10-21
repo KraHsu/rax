@@ -1,19 +1,46 @@
 """Actual native Claude Code, its sandbox and the robot MCP tools against a local fake Messages endpoint."""
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import shlex
 import shutil
 import threading
+from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-
+from test_auto_research_codex import secret_probes
 from test_bundle_sandbox import sandbox_runtime  # noqa: F401 (fixture)
 from test_controller_backend import configuration
+
 from harness import agent_host
 from harness.claude_cli import auto_research as claude
-from harness.claude_cli.login import PROVIDERS
+from harness.claude_cli.login import PROVIDERS, Credential
 from harness.codex_cli.auto_research import PROJECT
-from test_auto_research_codex import secret_probes
+
+
+@pytest.mark.parametrize('model', ['deepseek/deepseek-v4.1-flash-1017',
+                                 'qwen/qwen3-coder'])
+def test_non_claude_model_routes_auxiliary_requests_to_same_model(tmp_path, model):
+    key = tmp_path/'key'
+    key.write_text('fixture-private-secret')
+    key.chmod(0o600)
+    environment = Credential('openrouter', key_file=key).environment(model=model)
+    assert environment['ANTHROPIC_BASE_URL'] == 'https://openrouter.ai/api'
+    assert environment['ANTHROPIC_AUTH_TOKEN'] == 'fixture-private-secret'
+    assert environment['ANTHROPIC_API_KEY'] == ''
+    for name in ('ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+                 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'):
+        assert environment[name] == model
+
+
+@pytest.mark.parametrize('model', [None, 'anthropic/claude-opus-5.5'])
+def test_claude_model_keeps_provider_auxiliary_models(tmp_path, model):
+    key = tmp_path/'key'
+    key.write_text('fixture-private-secret')
+    key.chmod(0o600)
+    environment = Credential('openrouter', key_file=key).environment(model=model)
+    assert environment['ANTHROPIC_DEFAULT_SONNET_MODEL'] == PROVIDERS['openrouter']['auditor']
+    assert environment['ANTHROPIC_DEFAULT_HAIKU_MODEL'] == PROVIDERS['openrouter']['fast']
+    assert 'CLAUDE_CODE_SUBAGENT_MODEL' not in environment
 
 # Run by the agent's Bash tool, inside Claude Code's sandbox: what its commands can reach.
 PROBE = r'''
@@ -74,7 +101,11 @@ def sse(blocks, stop, ident):
     return ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
 
 
-def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkeypatch):
+@pytest.mark.parametrize('provider,model,effort', [
+    ('openrouter', None, 'xhigh'),
+    ('openrouter', 'deepseek/deepseek-v4.1-flash-1017', 'max'),
+    ('custom', 'deepseek-flash', 'max')])
+def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkeypatch, provider, model, effort):
     binary = shutil.which('claude')
     if not binary:
         pytest.skip('Claude Code is not installed')
@@ -82,7 +113,7 @@ def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkey
         pytest.skip("Claude Code's sandbox needs bubblewrap and socat")
     monkeypatch.setattr(claude, 'CALL_SECONDS', 120)
     root = sandbox_runtime
-    config = configuration(root)
+    config = replace(configuration(root), agent_effort=effort)
     workspace = config.root/'agent-workspace'
     secret = root/'test-key'
     secret.write_text('fixture-private-secret')
@@ -137,7 +168,10 @@ def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkey
     monkeypatch.setitem(PROVIDERS, 'openrouter', {**PROVIDERS['openrouter'],
                                                   'base_url': f'http://127.0.0.1:{server.server_port}'})
     try:
-        deployed = claude.deploy(config, provider='openrouter', key_file=secret, claude=binary)
+        deployed = claude.deploy(config, provider=provider, key_file=secret, claude=binary, model=model,
+                                base_url=f'http://127.0.0.1:{server.server_port}' if provider == 'custom' else None)
+        if provider == 'custom':
+            assert json.loads(deployed['login'].read_text())['base_url'] == f'http://127.0.0.1:{server.server_port}'
         assert deployed['workspace'] == workspace
         assert 'fixture-private-secret' not in (deployed['claude_home']/'settings.json').read_text()
         from services.controller.sandbox import deadline
@@ -153,6 +187,11 @@ def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkey
     final = [event for event in events if event.get('type') == 'result']
     assert result.returncode == 0, (final or result.stdout[-3000:], result.stderr[-3000:])
     assert len(agent_requests) == 3, (result.stdout[-3000:], other_requests)
+    if model:
+        assert all(req['model'] == model for req in agent_requests)
+        assert all(req.get('output_config', {}).get('effort') == 'max' for req in agent_requests), [
+            {'model': req['model'], 'thinking': req.get('thinking'), 'output_config': req.get('output_config')}
+            for req in agent_requests]
     results = [block for message in agent_requests[-1]['messages'] if message['role'] == 'user'
                and isinstance(message['content'], list) for block in message['content']
                if block.get('type') == 'tool_result']
@@ -176,7 +215,11 @@ def test_real_native_claude_code_sandbox_and_robot_tools(sandbox_runtime, monkey
     assert not [name for name in seen['secrets'] if name.startswith(('ROBODOJO', 'OPENROUTER', 'GEMINI', 'GOOGLE'))]
     # The robot tools the model saw: the session's, no web tools.
     tools = {tool['name'] for tool in agent_requests[0]['tools']}
-    assert f'mcp__{claude.MCP_SERVER}__start_episode' in tools and 'Bash' in tools
+    # Claude may advertise deferred discovery before individual MCP definitions.
+    # The successful MCP status round trip above verifies the live server.
+    assert 'Bash' in tools
+    assert (f'mcp__{claude.MCP_SERVER}__start_episode' in tools or
+            {'ToolSearch', 'DeferredToolPlaceholder'} & tools)
     assert not {'WebFetch', 'WebSearch'} & tools
     state = json.loads((config.root/'state.json').read_text())
     assert state['exploration_started'] == 0

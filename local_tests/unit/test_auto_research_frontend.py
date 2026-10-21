@@ -566,7 +566,7 @@ def test_launcher_mode_and_durable_lifecycle(tmp_path, monkeypatch, options, int
     (workspace/'START_PROMPT.md').write_text('Draft startup.\n')
     monkeypatch.setattr(auto_research.Configuration, 'from_dict', lambda _: config)
     monkeypatch.setattr(auto_research.Configuration, '__post_init__', lambda _: None)  # Local fixture storage.
-    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace':workspace})
+    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace':workspace, 'codex_home':workspace})
     monkeypatch.setattr(auto_research.signal, 'signal', lambda *a: None)
     calls = []
     def launch(*args, **kwargs):
@@ -605,7 +605,7 @@ def test_each_agent_turn_is_told_of_episodes_refunded_since_the_last(tmp_path, m
                                                'episodes': rows, 'sealed': False}))
     monkeypatch.setattr(auto_research.Configuration, 'from_dict', lambda _: config)
     monkeypatch.setattr(auto_research.Configuration, '__post_init__', lambda _: None)  # Local fixture storage.
-    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace': workspace})
+    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace': workspace, 'codex_home': workspace})
     monkeypatch.setattr(auto_research.signal, 'signal', lambda *a: None)
     monkeypatch.setattr(auto_research, 'latest_session', lambda home: 'thread')
     monkeypatch.setattr(auto_research, 'MAX_RELAUNCHES', 1)
@@ -642,7 +642,7 @@ def test_a_codex_error_resumes_the_conversation_against_the_same_frontend(tmp_pa
     (workspace/'START_PROMPT.md').write_text('Draft startup.\n')
     monkeypatch.setattr(auto_research.Configuration, 'from_dict', lambda _: config)
     monkeypatch.setattr(auto_research.Configuration, '__post_init__', lambda _: None)  # Local fixture storage.
-    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace': workspace})
+    monkeypatch.setattr(auto_research, 'deploy', lambda *a, **k: {'workspace': workspace, 'codex_home': workspace})
     monkeypatch.setattr(auto_research.signal, 'signal', lambda *a: None)
     monkeypatch.setattr(auto_research, 'latest_session', lambda home: 'thread')
     monkeypatch.setattr(auto_research, 'MAX_RELAUNCHES', 0)

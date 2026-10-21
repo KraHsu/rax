@@ -5,10 +5,13 @@ variants, left-out skills and files), renders every markdown source against the
 setup, and writes the tool contract. Callers add the session's extras (TASK.md,
 demonstrations, CLI entry files) around it.
 """
-from dataclasses import replace
+import errno
 import os
-from pathlib import Path
 import shutil
+import string
+import time
+from dataclasses import replace
+from pathlib import Path
 
 from .contract_files import write_contract
 from .recipe import SKILL_SOURCE
@@ -19,7 +22,25 @@ IGNORE = shutil.ignore_patterns('__pycache__', '*.pyc')
 TEMPLATE_IGNORE = shutil.ignore_patterns('__pycache__', '*.pyc', 'runtime')
 
 
-def install_skills(skills, layers, source=SKILL_SOURCE):
+def remove_skill_tree(path):
+    """Bounded retries for NFS metadata lag, without hiding permission errors."""
+    for attempt in range(8):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            if not Path(path).exists():
+                return
+            if attempt == 7:
+                raise
+            time.sleep(0.05 * 2**attempt)
+        except OSError as error:
+            if error.errno not in (errno.ENOTEMPTY, errno.EBUSY) or attempt == 7:
+                raise
+            time.sleep(0.05 * 2**attempt)
+
+
+def install_skills(skills, layers, source=SKILL_SOURCE, *, excluded=()):
     """Copy each layer's skill directories in order; later layers add or replace files."""
     skills = Path(skills)
     for layer in layers:
@@ -27,6 +48,8 @@ def install_skills(skills, layers, source=SKILL_SOURCE):
         if not root.is_dir():
             continue  # A layer may have no skills.
         for skill in sorted(path for path in root.iterdir() if path.is_dir()):
+            if skill.name in excluded:
+                continue
             if skill.is_symlink():
                 raise ValueError('Skill sources must not be symlinks')
             shutil.copytree(skill, skills / skill.name, dirs_exist_ok=True, ignore=IGNORE)
@@ -40,7 +63,8 @@ def _no_link(path, what):
 def apply_role(recipe, setup, workspace):
     """Documents and skills of this role, before rendering."""
     skills = workspace / '.agents/skills'
-    install_skills(skills, [layer.format(**setup.axes()) for layer in recipe.skill_layers])
+    omitted = {rule.skill for rule in recipe.omit_skills if rule.when(setup)}
+    install_skills(skills, [layer.format(**setup.axes()) for layer in recipe.skill_layers], excluded=omitted)
     if recipe.agents_source != 'AGENTS.md':
         source = workspace / recipe.agents_source
         if not source.is_file() or source.is_symlink():
@@ -48,13 +72,12 @@ def apply_role(recipe, setup, workspace):
         os.replace(source, workspace / 'AGENTS.md')
     for name in (*recipe.drop_documents, *recipe.role_documents):
         (workspace / name).unlink(missing_ok=True)
-    for rule in recipe.omit_skills:
-        if rule.when(setup):
-            path = skills / rule.skill
-            if path.exists():
-                _no_link(path, 'skills')
-                _no_link(skills, 'skills')
-                shutil.rmtree(path)
+    for name in sorted(omitted):
+        path = skills / name
+        if path.exists():
+            _no_link(path, 'skills')
+            _no_link(skills, 'skills')
+            remove_skill_tree(path)
     for kind in VARIANTS:
         for variant in sorted(skills.rglob(f'*.{kind}.md')):
             _no_link(variant, 'instructions')
@@ -102,6 +125,7 @@ def render_sources(recipe, setup, workspace):
 def manifest(recipe, setup, workspace, blocks):
     """Provenance of a built workspace (operator side, never in the workspace)."""
     import hashlib
+
     from .templates import BLOCKS
     files = {}
     for path in sorted(Path(workspace).rglob('*')):

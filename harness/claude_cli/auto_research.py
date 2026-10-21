@@ -17,6 +17,7 @@ from harness import agent_host
 from harness.claude_cli.login import PROVIDERS, Credential
 from harness.codex_cli.auto_research import (CALL_SECONDS, LOGIN_FILE, PID_FILE, expose_published, native_session,
                                              prepare_workspace, refresh_reviews, start_frontend, stop_services)
+from harness.cli_runtime import reference_sources
 from services.controller.storage import persist
 
 HOME_KEY, HOME_NAME = 'claude_home', 'claude-home'
@@ -63,7 +64,7 @@ def preflight_login():
         return None
 
 
-def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=None):
+def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=None, base_url=None):
     """Prepare a new session workspace for Claude Code without starting a model or simulator."""
     binary = claude_binary(claude)
     root = config.root
@@ -76,11 +77,12 @@ def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=N
         from harness.claude_cli import experiment_login
         experiment_login.status()  # The token exists and is usable.
         key_file, identity = experiment_login.token_file(), experiment_login.identity()
-    Credential(provider, key_file=key_file)  # Validate before provisioning.
+    Credential(provider, key_file=key_file, base_url=base_url)  # Validate before provisioning.
     prepared = prepare_workspace(config, HOME_NAME)
     persist(root/LOGIN_FILE, {
         'agent_cli': 'claude', 'provider': provider, 'model': model or PROVIDERS[provider]['model'],
         'key_file': str(key_file) if key_file else None,
+        **({'base_url': base_url} if base_url else {}),
         # Identity only (no token): which dedicated account this session bills.
         'account': {k: identity.get(k) for k in ('email', 'organization')} if identity else None})
     claude_workspace(prepared['workspace'])
@@ -199,6 +201,8 @@ def settings(config, deployed, socket):
     workspace = Path(deployed['workspace']).resolve()
     sockets = Path(socket).parent.resolve()
     reads = [path.resolve() for path in readable(config, deployed)]
+    # Claude Code checks the requested symlink spelling as well as its real target.
+    read_paths = [*reads, *(workspace / relative for _, relative in reference_sources(config))]
     guarded = [str(path) for path in protected(workspace)]
     rule = lambda tool, path: f'{tool}(/{path})'  # Absolute paths are written //like/this.
     return {
@@ -206,7 +210,7 @@ def settings(config, deployed, socket):
             # File edits in the workspace need no approval; sandboxed commands neither
             # (autoAllowBashIfSandboxed). Anything else outside the workspace is not allowed.
             'defaultMode': 'acceptEdits',
-            'allow': [f'mcp__{MCP_SERVER}', *(rule('Read', f'{path}/**') for path in reads)],
+            'allow': [f'mcp__{MCP_SERVER}', *(rule('Read', f'{path}/**') for path in read_paths)],
             'deny': [*DENIED_TOOLS, *(rule('Edit', path) for path in guarded),
                      *(rule('Edit', f'{path}/**') for path in guarded)]},
         'sandbox': {
@@ -247,7 +251,7 @@ def login(deployed):
 
 def credential(deployed):
     value = login(deployed)
-    return Credential(value['provider'], key_file=value['key_file'])
+    return Credential(value['provider'], key_file=value['key_file'], base_url=value.get('base_url'))
 
 
 def agent_command(config, deployed, *, prompt, interactive=False, json_output=False):
@@ -280,7 +284,8 @@ def agent_environment(config, deployed, socket):
                                          cpus=config.training.cpus, binary=deployed['claude'])
     timeout_ms = str((CALL_SECONDS+300)*1000)
     environment.update({
-        'CLAUDE_CONFIG_DIR': str(home), **credential(deployed).environment(),
+        'CLAUDE_CONFIG_DIR': str(home),
+        **credential(deployed).environment(model=deployed.get('model') or login(deployed)['model']),
         # One robot tool call (an episode, a rehearsal) may block for days; so may a script using them.
         'MCP_TOOL_TIMEOUT': timeout_ms, 'BASH_MAX_TIMEOUT_MS': str(CALL_SECONDS*1000),
         # The session home is no installation to update.

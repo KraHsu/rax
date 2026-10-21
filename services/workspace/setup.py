@@ -30,7 +30,8 @@ class Setup:
         object.__setattr__(self, 'options', frozenset(self.options))
         if self.options - OPTIONS:
             raise ValueError('Unknown workspace option')
-        if self.cli not in ('codex', 'claude'):
+        from harness.backends import NAMES
+        if self.cli not in NAMES:
             raise ValueError('Unknown agent CLI')
         if 'agent-formal' in self.options and self.contract.phase == 'exploration':
             # Live-copy mode: exploration has no register, rehearse or submit.
