@@ -494,7 +494,7 @@ def main():
     contract = Contract.from_config(config)
     if contract.environments > 1 and not args.socket:
         raise ValueError('Parallel exploration requires the shared socket endpoint')
-    key = load_key(args.key_file)
+    key = load_key(args.key_file) if config.external_perception else None
     supervisor = Supervisor(config, lambda: make_backend(config), GeminiRouter(key) if key else None)
     frontend_class = ResearchFrontend
     if config.exploration_envs > 1:

@@ -59,7 +59,7 @@ def preflight_login():
 COMPACT_WINDOW = 250_000
 
 
-def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=None):
+def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=None, base_url=None):
     """Prepare a new SSD workspace for Claude Code without starting a model or simulator."""
     binary = claude_binary(claude)
     root = config.root
@@ -68,6 +68,8 @@ def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=N
         raise FileExistsError('Use a fresh auto-research trial root')
     model = model or PROVIDERS[provider]['model']
     auditor, fast = PROVIDERS[provider]['auditor'], PROVIDERS[provider]['fast']
+    if not model.lstrip('~').startswith(('anthropic/', 'claude-')):
+        auditor = fast = model
     account = None
     if provider == 'claude-login' and key_file is None:
         # The dedicated experiment token (never the personal ~/.claude login), which the relay
@@ -75,11 +77,11 @@ def deploy(config, *, provider='openrouter', key_file=None, model=None, claude=N
         from harness.claude_cli import experiment_login
         experiment_login.status()  # The token exists and is usable.
         key_file, account = experiment_login.token_file(), experiment_login.identity()
-    Credential(provider, key_file=key_file)  # Validate before provisioning.
+    Credential(provider, key_file=key_file, base_url=base_url)  # Validate before provisioning.
     # Only paths and names: the relay reads the credential itself at each request.
     relay_file = root/'model-relay.json'
     relay_file.write_text(json.dumps({
-        'agent_cli': 'claude', 'provider': provider, 'base_url': PROVIDERS[provider]['base_url'], 'model': model,
+        'agent_cli': 'claude', 'provider': provider, 'base_url': base_url or PROVIDERS[provider]['base_url'], 'model': model,
         'models': sorted({model, auditor, fast}),
         'key_file': str(key_file) if key_file else None,
         # Identity only (no token): which dedicated account this session bills.
@@ -243,7 +245,7 @@ def relay_credential(deployed):
     if relay.get('credentials_file'):
         raise RuntimeError('This session was prepared with the personal Claude login, which experiments no '
                            'longer use; prepare a new session (claude-login uses the experiment token)')
-    return relay, Credential(relay['provider'], key_file=relay['key_file'])
+    return relay, Credential(relay['provider'], key_file=relay['key_file'], base_url=relay.get('base_url'))
 
 
 def model_relay(config, deployed, relay_dir, *, calls_file=None, seconds, usage_log=None):
@@ -252,7 +254,7 @@ def model_relay(config, deployed, relay_dir, *, calls_file=None, seconds, usage_
     model = MessagesRelay(relay_dir/'model.sock', credential, base_url=relay['base_url'],
                           models=relay.get('models') or [relay['model']],
                           calls_file=calls_file, client_write_timeout=seconds, usage_log=usage_log,
-                          slots=relay_slots(config))
+                          slots=relay_slots(config), allow_private_http=relay['provider'] == 'custom')
     model.start()
     return model
 

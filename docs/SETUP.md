@@ -119,6 +119,8 @@ apply on either version.
 
 ## 4. HumanoidArena assets and SONIC
 
+For DeepSeek Harness or Kimi Code, follow the [agent harness guide](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md) after installing the host dependencies.
+
 ```bash
 bash scripts/setup_humanoid_assets.sh
 ```

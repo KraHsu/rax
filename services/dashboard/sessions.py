@@ -205,9 +205,13 @@ class ResearchSessions:
         from services.controller.config import TASK_RULES
         if values['task_rules'] not in TASK_RULES:
             raise ValueError('Invalid task_rules')
-        if values['agent_cli'] not in ('codex', 'claude'):
-            raise ValueError('agent_cli must be codex or claude')
-        if values['agent_provider'] not in ('openrouter', 'claude-login', 'anthropic'):
+        from harness.backends import NAMES, PROVIDERS
+        if values['agent_cli'] not in NAMES:
+            raise ValueError(f'agent_cli must be one of {NAMES}')
+        providers = ('openrouter', 'deepseek-api', 'deepseek-account', 'custom') if values['agent_cli'] == 'dsh' else (
+            'openrouter', 'claude-login', 'anthropic', 'custom')
+        providers = PROVIDERS.get(values['agent_cli'], providers)
+        if values['agent_provider'] not in providers:
             raise ValueError('Invalid agent_provider')
         from services.controller.config import AGENT_EFFORTS
         if values['agent_effort'] not in AGENT_EFFORTS:
@@ -379,7 +383,7 @@ class ResearchSessions:
     def agent(directory, config):
         """Agent CLI and provider; for claude-login, the dedicated account it bills."""
         cli, provider = config.get('agent_cli', 'codex'), config.get('agent_provider', 'openrouter')
-        result = {'cli': cli, 'provider': provider if cli == 'claude' else None, 'account': None,
+        result = {'cli': cli, 'provider': provider if cli != 'codex' else None, 'account': None,
                   'effort': config.get('agent_effort', 'xhigh')}
         if cli == 'claude' and provider == 'claude-login':
             relay = read_json(directory/'model-relay.json')  # Written at launch; identity only.
@@ -400,6 +404,14 @@ class ResearchSessions:
         state = read_json(directory/'state.json')
         # Claude sessions: the host relay's log; Codex sessions: every rollout thread.
         usage = codex_usage(directory/'codex-home', self.usage_readers) or relay_usage(directory/'model-usage.jsonl')
+        if (directory/'dsh-home').is_dir():
+            from services.dsh_usage import UsageReader
+            usage = UsageReader().read(directory/'dsh-home')
+        from harness.backends import PROVIDERS
+        for name in PROVIDERS:
+            if (directory/(name+'-home')).is_dir():
+                from services.native_cli_usage import UsageReader
+                usage = UsageReader().read(directory/(name+'-home'))
         return {**summary, 'command': self.command(directory),
                 'live_observation': self.live_observation(directory),
                 'configuration': read_json(directory/'operator-input.json'), 'usage': usage,

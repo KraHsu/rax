@@ -1,0 +1,24 @@
+{
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+  "revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
+  "image": "docker.io/vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3",
+  "served_model": "deepseek-flash",
+  "tensor_parallel_size": 4,
+  "max_model_len": 1048576,
+  "max_num_seqs": 64,
+  "reasoning_effort": 100,
+  "enforce_eager": false,
+  "compilation_config": {
+    "cudagraph_mode": "FULL_AND_PIECEWISE",
+    "cudagraph_capture_sizes": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ]
+  },
+  "cpu_threads": 4
+}

@@ -39,7 +39,8 @@ class Setup:
         object.__setattr__(self, 'options', frozenset(self.options))
         if self.options - OPTIONS:
             raise ValueError('Unknown workspace option')
-        if self.cli not in ('codex', 'claude'):
+        from harness.backends import NAMES
+        if self.cli not in NAMES:
             raise ValueError('Unknown agent CLI')
         if type(self.expert_demonstrations) is not int or self.expert_demonstrations < 0:
             raise ValueError('expert_demonstrations must be a nonnegative integer')
