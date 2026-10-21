@@ -2,6 +2,7 @@
 and nothing it starts outlives it."""
 import json
 import os
+from pathlib import PurePosixPath
 import subprocess
 import sys
 import time
@@ -100,6 +101,24 @@ def test_a_session_resumes_its_own_conversation(session):
     claude.launch(config, {**deployed, 'resume_session': 'thread-1'}, prompt='again')
     argv = (deployed['claude_home']/'argv').read_text().splitlines()
     assert argv[argv.index('--resume') + 1] == 'thread-1' and argv[-2:] == ['--', 'again']
+
+
+def test_expert_demo_read_permissions_cover_symlink_and_target(session, tmp_path, monkeypatch):
+    config, deployed, *_ = session
+    target = tmp_path/'reference/experts'
+    target.mkdir(parents=True)
+    alias = deployed['workspace']/'runtime/experts'
+    alias.parent.mkdir()
+    alias.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(claude, 'reference_sources',
+                        lambda _: [(target, PurePosixPath('runtime/experts'))])
+    settings = claude.settings(config, deployed, tmp_path/'socket/mcp.sock')
+    allowed = settings['permissions']['allow']
+    assert f'Read(/{alias}/**)' in allowed
+    assert f'Read(/{alias.resolve()}/**)' in allowed
+    assert str(target) in settings['sandbox']['filesystem']['allowRead']
+    assert str(target) not in settings['sandbox']['filesystem']['allowWrite']
+    assert settings['permissions']['defaultMode'] == 'acceptEdits'
 
 
 def test_an_exhausted_usage_window_is_waited_out_in_the_same_conversation(session, monkeypatch):

@@ -71,6 +71,9 @@ bash scripts/run_operator_dashboard.sh                    # prepare and launch s
 
 The full guides:
 
+- [Agent harnesses](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md): Codex CLI, Claude Code, DeepSeek Harness and Kimi Code; providers, authentication and setup.
+- [DeepSeek serving](https://github.com/robot-agent-exploration/rax/blob/main/docs/DEEPSEEK_SERVING.md): four-H200 setup, tuning and protocol checks.
+- [DeepSeek model results](docs/DEEPSEEK_MODEL_RESULTS.md): DexJoCo task scores, baseline comparisons, configurations, API pricing and Click Mouse harness results.
 - [Setup](docs/SETUP.md): host requirements, every installation step, credentials for the
   agent CLIs, the demonstrations, and the tests.
 - [Usage](docs/USAGE.md): preparing, launching, monitoring, stopping and resuming

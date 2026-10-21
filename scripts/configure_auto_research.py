@@ -54,12 +54,14 @@ def arguments():
                         help='Simulator benchmark')
     parser.add_argument('--task-rules', choices=('public', 'code-summary'), default='public',
                         help='TASK.md: the public task definition, or add rules summarized from the official task code')
-    parser.add_argument('--agent-cli', choices=('codex', 'claude'), default='codex',
-                        help='Native agent CLI: codex or claude')
-    parser.add_argument('--agent-provider', choices=('openrouter', 'claude-login', 'anthropic'), default='openrouter',
-                        help='Claude only: the model provider Claude Code signs in to')
+    parser.add_argument('--agent-cli', choices=('codex', 'claude', 'dsh', 'kimi'), default='codex',
+                        help='Agent CLI backend')
+    parser.add_argument('--agent-provider', choices=('openrouter', 'claude-login', 'anthropic', 'custom', 'deepseek-api', 'deepseek-account', 'moonshot-api', 'kimi-account'), default='openrouter',
+                        help='Model provider for the selected native agent CLI')
     parser.add_argument('--agent-effort', choices=AGENT_EFFORTS, default='xhigh',
                         help='Model reasoning effort for the agent CLI')
+    parser.add_argument('--external-perception', choices=('on', 'off'), default='on',
+                        help='Expose the optional external Gemini perception tool')
     parser.add_argument('--sim-gpu', required=True, help='Simulator GPU ordinal or UUID (the agent has no GPU)')
     parser.add_argument('--episodes', type=int, default=5)
     parser.add_argument('--observation-profile', choices=('rgbd', 'rgb-only'), default='rgbd')
@@ -137,6 +139,7 @@ def main():
         transfer_parts=tuple(p for p in args.transfer_parts.split(',') if p), transfer_mb=args.transfer_mb,
         task_rules=args.task_rules, agent_cli=args.agent_cli,
         agent_provider=args.agent_provider, agent_effort=args.agent_effort,
+        external_perception=args.external_perception == 'on',
         benchmark=args.benchmark)
     validate_layouts(config)
     # Fetch only official visual media before any model/episode starts; the agent works offline. Deployment converts the selected format to local images.

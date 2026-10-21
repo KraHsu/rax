@@ -100,6 +100,8 @@ want them in a shell.
 
 ## 4. Agent CLI and model credentials
 
+For DeepSeek Harness or Kimi Code, follow the [agent harness guide](https://github.com/robot-agent-exploration/rax/blob/main/docs/AGENT_HARNESSES.md) after installing the host dependencies.
+
 Install at least one agent CLI on the host, on your `PATH`. It runs natively as your user
 and reaches its model provider directly; the harness adds no relay. Each session has its
 own CLI home (`codex-home/` or `claude-home/` in the session directory), rewritten at every
