@@ -65,13 +65,8 @@ CONVERSATION = {'clear': 'none', 'compact': 'summary', 'resume': 'full'}
 
 
 def harness(cli):
-    if cli == 'claude':
-        from harness.claude_cli import auto_research as module
-    elif cli == 'codex':
-        from harness.codex_cli import auto_research as module
-    else:
-        raise ValueError('Unknown agent CLI')
-    return module
+    from harness.backends import get
+    return get(cli)
 
 
 def status_tool():

@@ -38,6 +38,8 @@ def retire_fields(value):
         raise ValueError(f'Experiment mode {mode!r} was removed; only auto-research remains')
     for key in RETIRED:
         value.pop(key, None)
+    # Existing sessions exposed the external perception tool before this setting existed.
+    value.setdefault('external_perception', True)
     return value
 
 
@@ -86,7 +88,8 @@ class Configuration:
     subagents: int = 0  # Concurrent exploration subagents; 0 = one per environment when envs > 1, else none
     task_rules: str = 'public'  # TASK.md: 'public' wiki rubric, or 'code-summary' (plus rules from the task code)
     agent_cli: str = 'codex'  # 'codex' or 'claude' (harness/claude_cli)
-    agent_provider: str = 'openrouter'  # Claude only: openrouter, claude-login or anthropic
+    agent_provider: str = 'openrouter'  # Provider choices depend on the native agent backend.
+    external_perception: bool = True  # Optional external Gemini tool; native model vision works without it.
     agent_effort: str = 'xhigh'  # Model reasoning effort for the agent CLI: xhigh or max
     # The session's one evaluation mode. Off (code mode): the agent submits one rehearsed
     # bundle, run alone on the held-out layouts. On (live-copy mode, services/agent_formal):
@@ -136,10 +139,20 @@ class Configuration:
         from services.robodojo.task_rubrics import TASK_RULES
         if self.task_rules not in TASK_RULES:
             raise ValueError(f'task_rules must be one of {TASK_RULES}')
-        if self.agent_cli not in ('codex', 'claude'):
-            raise ValueError('agent_cli must be codex or claude')
-        if self.agent_provider not in ('openrouter', 'claude-login', 'anthropic'):
-            raise ValueError('agent_provider must be openrouter, claude-login or anthropic')
+        from harness.backends import NAMES, PROVIDERS
+        if self.agent_cli not in NAMES:
+            raise ValueError(f'agent_cli must be one of {NAMES}')
+        if type(self.external_perception) is not bool:
+            raise ValueError('external_perception must be boolean')
+        providers = ('openrouter', 'deepseek-api', 'deepseek-account', 'custom') if self.agent_cli == 'dsh' else (
+            'openrouter', 'claude-login', 'anthropic', 'custom')
+        providers = PROVIDERS.get(self.agent_cli, providers)
+        if self.agent_provider not in providers:
+            raise ValueError(f'agent_provider must be one of {providers}')
+        if self.agent_cli == 'dsh' and (self.agent_formal or self.adaptation_source or self.subagents or self.exploration_envs != 1):
+            raise ValueError('DSH currently supports code formal, one exploration environment, no adaptation or subagents')
+        if self.agent_cli in PROVIDERS and (self.agent_formal or self.adaptation_source or self.subagents or self.exploration_envs != 1):
+            raise ValueError(f'{self.agent_cli} currently supports code formal, one exploration environment, no adaptation or subagents')
         if self.agent_effort not in AGENT_EFFORTS:
             raise ValueError(f'agent_effort must be one of {AGENT_EFFORTS}')
         if self.demonstration_context not in DEMONSTRATION_CONTEXTS:
