@@ -66,6 +66,7 @@ def main():
     p.add_argument('--review', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--login-home', type=Path, default=Path.home()/'.codex')
+    p.add_argument('--timeout', type=int, default=1800, help='Maximum seconds per offline annotation')
     args = p.parse_args()
     source = args.review.resolve()
     review = json.loads((source/'review.json').read_text())
@@ -101,7 +102,7 @@ def main():
     try:
         process = agent_host.start(command, cwd=workspace, env=agent_environment(config, deployed, socket),
                                    stdin=subprocess.DEVNULL)
-        code = process.wait()
+        code = process.wait(timeout=args.timeout)
         if code:
             metadata.update(status='failed', returncode=code)
             raise SystemExit(code)
