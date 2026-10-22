@@ -16,14 +16,14 @@ sys.path.insert(0, str(PROJECT))
 from harness import agent_host
 from harness.codex_cli.auto_research import agent_command, agent_environment, chatgpt_login, codex_binary, expose_published, settings
 from harness.codex_cli.configuration import write_config
-from services.robotwin.constraint_schema import validate_bundle
+from services.robotwin.constraint_schema import SCHEMA_VERSION, validate_bundle
 
 
 INSTRUCTIONS = """# RAX offline RoboTwin constraint annotation
 
 Read TASK.md and input/review.json, then inspect input/trajectory.csv and the
 relevant preview images. Read .agents/skills/geometric-constraints/SKILL.md for
-the seven geometric primitives and their units. This is OFFLINE annotation:
+the geometric primitives and their units. This is OFFLINE annotation:
 there is no robot MCP, no simulation, and no physics action to call. The skill's
 live recording/upsert instructions do not apply. Frames are the native recorded
 observation indices in the CSV, not sparse command boundaries.
@@ -33,9 +33,15 @@ Write annotations.json with EXACTLY these two keys:
   constraints: an array following the existing constraint schema
 Also write REPORT.md explaining each choice and uncertain geometry.
 
-Use composable geometric constraints, with no operation-class taxonomy. Choose
-only task-relevant features; do not constrain every coordinate throughout the
-trajectory. Select activation from the recorded demonstration, never generated
+Use composable geometric constraints, with no operation-class taxonomy. FULL
+temporal coverage is required, not per-frame path imitation. Ordinary movement
+uses a broad direction cone on adjacent EEF displacements, not XYZ targets around
+each demonstration sample. Add task-relevant position/angle regions for precise
+interactions, and explicitly preserve irrelevant rotational/spatial freedoms.
+The executor fills any remaining geometry gaps with direction cones or loose
+stationary hold regions; inspect the generated coverage audit. These defaults
+are declared priors, not inferred task geometry. Select activation from the
+recorded demonstration, never generated
 actions. Event frames must match a genuine gripper threshold crossing. Use the
 input recording_id as evidence.report_id, and demonstration_analysis as source.
 
@@ -48,8 +54,8 @@ For a new geometric claim unsupported by measurements/explicit priors, use
 proposed or unknown; these are excluded from training. A source expert's success
 does not reveal the boundaries of a successful grasp region.
 
-Prefer a small justified set: closure-event pose or gripper opening, terminal
-lift displacement, task-sensitive axis/angle if supported. Do not invent a
+Review precise interactions, gripper changes, and task-sensitive axes/angles,
+as well as ordinary motion over the whole trajectory. Do not invent a
 required orientation from the task name. State whether a cross-chunk displacement
 constraint requires its start frame inside a training chunk; also use local
 endpoint/interval constraints where justified. Never copy example numbers.
@@ -91,7 +97,7 @@ on the data host checks numerical validity, not physical feasibility.\n'''
         from services.robotwin.programmatic_annotation import instantiate_review
         for relative in ('services/__init__.py','services/robotwin/__init__.py'):
             path=workspace/'template_runtime'/relative; path.parent.mkdir(parents=True,exist_ok=True);path.write_text('')
-        for name in ('annotation.py','constraint_schema.py','programmatic_annotation.py'):
+        for name in ('annotation.py','constraint_schema.py','constraint_coverage.py','full_trajectory.py','programmatic_annotation.py'):
             shutil.copy2(PROJECT/'services/robotwin'/name,workspace/'template_runtime/services/robotwin'/name)
         helper=workspace/'validate_task_template.py'
         helper.write_text('#!'+sys.executable+'\n'+'''import json,sys
@@ -135,7 +141,7 @@ print(json.dumps({'constraints':c,'audit':a},indent=2))
         proposal = json.loads((workspace/'annotations.json').read_text())
         if set(proposal) != {'source_sha256', 'constraints'} or proposal['source_sha256'] != review['source_sha256']:
             raise ValueError('Agent output has invalid source identity or fields')
-        bundle = dict(review['bundle_template'], constraints=proposal['constraints'])
+        bundle = dict(review['bundle_template'], constraints=proposal['constraints'], schema_version=SCHEMA_VERSION)
         validate_bundle(bundle, review['frame_count'])
         if not (workspace/'REPORT.md').is_file():
             raise ValueError('Agent did not write its annotation report')

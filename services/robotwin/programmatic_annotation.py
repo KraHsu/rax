@@ -11,7 +11,8 @@ import math
 import numpy as np
 
 from services.robotwin.annotation import reference_values, rotation, validate_reference_bounds
-from services.robotwin.constraint_schema import KINDS, keys, read_embedded, validate_bundle, vector
+from services.robotwin.constraint_schema import KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, vector
+from services.robotwin.full_trajectory import complete_constraints
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
 SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum')
@@ -48,7 +49,7 @@ def validate_template(t):
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
-        if r['type'] not in KINDS or r['subjects'] not in ('active_arms', 'left', 'right'):
+        if r['type'] not in KINDS or r['type'] == 'motion_direction_cone' or r['subjects'] not in ('active_arms', 'left', 'right'):
             raise ValueError('Unsupported primitive or subject')
         if not isinstance(r['rationale'], str) or not r['rationale']:
             raise ValueError('Explain the selected feature')
@@ -204,10 +205,12 @@ def instantiate(handle, template):
         if selected_count == 0 and rule.get('required', True): raise OutsideTemplate(f'Missing selection for {rule["id"]}')
     if not constraints or len(constraints) > 128 or not any(c['type'] != 'gripper_interval' for c in constraints):
         raise OutsideTemplate('Need 1..128 constraints with at least one geometric feature')
-    generated = dict(bundle, constraints=constraints)
+    constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'])
+    generated = dict(bundle, constraints=constraints, schema_version=SCHEMA_VERSION)
     validate_bundle(generated, len(arms['left']['grip']))
     audit = validate_reference_bounds(generated, handle)
-    return constraints, {'template_sha256': thash, 'signature': signature, 'policy': POLICY, 'reference_audit': audit}
+    return constraints, {'template_sha256': thash, 'signature': signature, 'policy': POLICY,
+                         'reference_audit': audit, 'coverage': coverage}
 
 
 def instantiate_review(review_path, template):

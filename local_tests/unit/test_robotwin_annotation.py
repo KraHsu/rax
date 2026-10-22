@@ -35,12 +35,13 @@ def test_checked_annotations_are_embedded_with_history_and_stale_update_rejected
     c = template(); c['parameters']['bounds'] = [-.01,.08]
     proposal = {'source_sha256':digest(episode), 'constraints':[c]}
     result = embed_review(episode, proposal, agent_run='fixture-run')
-    assert result['revision'] == result['accepted'] == 1
+    assert result['revision'] == 2 and result['accepted'] >= 3
+    assert result['coverage']['complete']
     with h5py.File(episode) as h:
-        assert read_embedded(h)['constraints'] == [c]
+        assert read_embedded(h)['constraints'][0] == c
         history=json.loads(h['trajectory_constraints/history'][()])
-        assert history[0]['agent_run'] == 'fixture-run'
-        assert history[0]['source_sha256'] == proposal['source_sha256']
+        assert history[-1]['agent_run'] == 'fixture-run'
+        assert history[-1]['source_sha256'] == proposal['source_sha256']
     with pytest.raises(ValueError, match='Stale'):
         embed_review(episode, proposal, agent_run='old-run')
 

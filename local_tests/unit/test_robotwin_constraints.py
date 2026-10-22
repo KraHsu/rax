@@ -42,10 +42,10 @@ def test_recording_publishes_observations_constraints_and_revisions_together(tmp
     assert recorder.finish(success=True) == str(path)
     with h5py.File(path) as h:
         b = read_embedded(h)
-        assert b['constraints'] == [c] and b['provenance']['native_success'] is True
+        assert b['constraints'][0] == c and b['provenance']['native_success'] is True
         assert len(h['endpose/left_endpose']) == len(h['observation/head_camera/rgb']) == 3
-        assert h['trajectory_constraints'].attrs['revision'] == 2
-        assert len(json.loads(h['trajectory_constraints/history'][()])) == 2
+        assert h['trajectory_constraints'].attrs['revision'] == 3
+        assert len(json.loads(h['trajectory_constraints/history'][()])) == 3
         assert h.attrs['instruction'] == 'synthetic instruction'
 
 

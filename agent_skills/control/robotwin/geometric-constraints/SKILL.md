@@ -6,6 +6,12 @@ description: Annotate recorded RoboTwin data with composable geometric intervals
 Use `robotwin_constraints` while recording clean training episodes. There are
 no operation categories. Every annotation is a base geometric constraint;
 multiple annotations mean conjunction (all should hold), not alternative modes.
+Every successful training episode must have position/motion coverage for every
+valid action frame of both arms. Ordinary movement should constrain a broad
+direction, not the demonstration's exact path. Task-specific precision regions
+and angle constraints apply where justified; irrelevant freedoms remain free.
+The recorder/publication executor fills remaining temporal gaps and records
+an explicit coverage audit inside the HDF5. Do not call sparse events full coverage.
 
 1. Read `robotwin_observe` and its `recorded_frame`. Frame zero is the initial
    observation; one native command adds one observed frame. Never confuse
@@ -40,6 +46,16 @@ Base types and parameter units:
 | axis_displacement_interval | projected displacement from activation.start | axis, bounds in m |
 | angular_displacement_interval | rotation angle from activation.start | bounds in rad |
 | gripper_interval | absolute gripper command fraction, 0=closed and 1=open; not measured finger distance | bounds in [0,1] |
+| motion_direction_cone | violation distance of adjacent EEF displacement outside a forward cone | axis, half_angle_rad in (0,pi/2), bounds=[0,slack_m] |
+
+`motion_direction_cone` requires schema 1.1 and interval activation starting at
+frame >= 1. For displacement v=p[t]-p[t-1], world direction n, axial a=n·v,
+and lateral b=||v-a*n||, its feature is max(0,b-tan(half_angle_rad)*a,-a).
+The interval loss penalizes only the excess above slack_m. It is invariant to
+absolute path translation and permits different step lengths and paths within
+the cone. Zero motion is allowed; direction supervision alone does not ensure
+arrival. Reference-selected endpoints/interaction regions and the base loss
+still supply task completion supervision. Activation never depends on prediction.
 
 `reference_frame` is a fixed transform into world coordinates: origin in metres
 and quaternion WXYZ. Its axes are converted to world directions. A moving object

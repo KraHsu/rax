@@ -45,6 +45,10 @@ are loopback only; this is a private local website, not a public deployment.
 - **Constraint inspection:** each composable primitive's allowed interval,
   activation frames, reference feature, bounds check, penalty, evidence, and fixed
   coordinate frame. Displacement plots preserve the annotated original anchor.
+- **Coverage:** position/motion coverage for every arm/action frame, with gaps
+  highlighted. Orientation and gripper coverage are separate; full temporal
+  coverage does not fix all degrees of freedom. Ordinary movement constrains
+  direction rather than per-frame XYZ targets. New annotation revisions refresh automatically.
 - **Initial-state comparison:** paginated frame-zero thumbnails, seed, and scene
   fingerprint; click an image to open that episode. Object initial XYZ/WXYZ poses
   are available under provenance. This exposes variation without equating distinct
@@ -83,8 +87,10 @@ python -m services.dataset_viewer.server --root /path/to/robotwin_clean50_v1 --p
 node --check services/dataset_viewer/static/app.js
 ```
 
-Tests cover all seven feature types across all three activation modes, nonzero
+Tests cover the original seven feature types across all three activation modes, nonzero
 anchors and rotated frames, publication transitions, distinct scene metadata,
 native JPEG channel correction, video byte ranges, path confinement, and artifact
 immutability. The service exposes GET-only endpoints under `/api/health`,
 `/api/summary`, `/api/episodes`, `/api/episode`, `/api/frame`, and `/api/video`.
+Direction cones and short-chunk coverage have additional tests in
+`test_robotwin_full_coverage.py` and the OpenWAM loss tests.

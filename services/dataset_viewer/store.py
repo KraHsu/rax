@@ -3,6 +3,7 @@ from collections import OrderedDict
 import copy
 import io
 import json
+import math
 from pathlib import Path
 import re
 import threading
@@ -14,6 +15,7 @@ from PIL import Image
 
 from services.robotwin.annotation import reference_values, rotation
 from services.robotwin.constraint_schema import read_embedded
+from services.robotwin.constraint_coverage import coverage_report
 
 
 def read_json(path, default=None):
@@ -25,6 +27,10 @@ def feature_curve(handle, constraint):
     c = constraint; arm = c['subject'].split('_')[0]; p = c['parameters']
     pose = np.asarray(handle[f'endpose/{arm}_endpose']); frame = c['reference_frame']
     basis = rotation(frame['quaternion_wxyz']); kind = c['type']
+    if kind == 'motion_direction_cone':
+        steps = np.diff(pose[:, :3], axis=0, prepend=pose[:1, :3]); axis = basis @ np.asarray(p['axis'])
+        axial = steps @ axis; lateral = np.linalg.norm(steps-axial[:, None]*axis, axis=-1)
+        return np.maximum.reduce((lateral-math.tan(p['half_angle_rad'])*axial, -axial, np.zeros_like(axial)))
     if kind == 'gripper_interval': return np.asarray(handle[f'endpose/{arm}_gripper']).reshape(-1)
     if kind == 'axis_angle_interval':
         axes = rotation(pose[:, 3:]) @ np.asarray(p['local_axis']); target = basis @ np.asarray(p['reference_axis'])
@@ -114,6 +120,8 @@ class Dataset:
                                'constraints': r.get('annotation_result', {}).get('accepted'),
                                'initial_sha256': r['initial_scene_sha256'], 'native_success': r['native_success'],
                                'annotation_status': 'done' if published else r['annotation_status'],
+                               'revision': r.get('annotation_result', {}).get('revision', 0),
+                               'full_coverage': r.get('annotation_result', {}).get('coverage', {}).get('complete', False),
                                'recording_seconds': sum(r.get('seconds', {}).values())})
             return {'task': task, 'episodes': sorted(result, key=lambda r: r['index'])}
         return self.cached(('episodes', task), 4, load)
@@ -144,13 +152,15 @@ class Dataset:
                     constraints.append(c)
                 scene = json.loads(h['initial_scene/json'][()]) if 'initial_scene/json' in h else None
                 history = json.loads(h['trajectory_constraints/history'][()]) if 'trajectory_constraints/history' in h else []
+                annotation_history = [r for r in history if not r.get('agent_run', '').startswith('full-motion-coverage')]
                 return {'task': task, 'index': index, 'seed': meta['seed'], 'frames': length, 'annotated': path.parent.name == 'data',
                         'instruction': str(h.attrs.get('instruction', '')), 'native_success': meta['native_success'],
                         'initial_sha256': meta['initial_scene_sha256'], 'initial_scene': scene, 'provenance': meta,
                         'action_contract': bundle['action_contract'], 'arms': arms, 'events': sorted(events, key=lambda x: x['frame']),
                         'constraints': constraints, 'cameras': [c for c in h['observation'] if 'rgb' in h['observation'][c]],
+                        'coverage': coverage_report(bundle['constraints'], length),
                         'revision': int(h['trajectory_constraints'].attrs.get('revision', 0)),
-                        'annotation_method': 'programmatic' if history and history[-1].get('agent_run', '').startswith('template:') else 'rax' if history else 'pending',
+                        'annotation_method': 'programmatic' if annotation_history and annotation_history[-1].get('agent_run', '').startswith('template:') else 'rax' if annotation_history else 'pending',
                         'video': self.video_path(task, index, meta['seed'], required=False) is not None,
                         'recording_id': bundle['provenance']['recording_id']}
         return self.cached(key, 300, load)

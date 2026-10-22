@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {adjust_bottle:'调整瓶子',beat_block_hammer:'锤击积木',blocks_ranking_rgb:'积木颜色排序',blocks_ranking_size:'积木大小排序',click_alarmclock:'按下闹钟',click_bell:'按铃',dump_bin_bigbin:'倾倒垃圾桶',grab_roller:'双臂抓取滚筒',handover_block:'积木交接',handover_mic:'麦克风交接',hanging_mug:'悬挂马克杯',lift_pot:'抬起锅具',move_can_pot:'移动罐子到锅中',move_pillbottle_pad:'移动药瓶到垫子',move_playingcard_away:'移开扑克牌',move_stapler_pad:'移动订书机到垫子',open_laptop:'打开笔记本电脑',open_microwave:'打开微波炉',pick_diverse_bottles:'抓取不同瓶子',pick_dual_bottles:'双臂抓瓶',place_a2b_left:'左侧物体放置',place_a2b_right:'右侧物体放置',place_bread_basket:'面包放入篮子',place_bread_skillet:'面包放入煎锅',place_burger_fries:'汉堡与薯条放置',place_can_basket:'罐子放入篮子',place_cans_plasticbox:'罐子放入塑料箱',place_container_plate:'容器放到盘子上',place_dual_shoes:'双鞋放置',place_empty_cup:'放置空杯',place_fan:'放置风扇',place_mouse_pad:'鼠标放到垫子上',place_object_basket:'物体放入篮子',place_object_scale:'物体放到秤上',place_object_stand:'物体放到支架',place_phone_stand:'手机放到支架',place_shoe:'放置鞋子',press_stapler:'按压订书机',put_bottles_dustbin:'瓶子放入垃圾桶',put_object_cabinet:'物体放入柜子',rotate_qrcode:'旋转二维码',scan_object:'扫描物体',shake_bottle:'摇晃瓶子',shake_bottle_horizontally:'水平摇晃瓶子',stack_blocks_three:'堆叠三块积木',stack_blocks_two:'堆叠两块积木',stack_bowls_three:'堆叠三个碗',stack_bowls_two:'堆叠两个碗',stamp_seal:'盖章',turn_switch:'转动开关'};
-const kinds = {axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
+const kinds = {motion_direction_cone:'移动方向锥',axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
 const statusNames = {queued:'等待采集',initializing:'初始化',recording:'采集中',recorded:'录制完成',failed:'需要处理',retry_queued:'等待重试'};
 const armName = arm => arm.startsWith('left') ? '左臂' : '右臂';
 const number = v => Number(v).toLocaleString('en-US');
@@ -95,7 +95,7 @@ async function loadEpisode(index, preserve=false) {
     $('arm-select').value=detail.constraints[0]?.subject.startsWith('right')?'right':'left';
     $('camera-select').innerHTML=detail.cameras.map(c=>`<option value="${escapeHTML(c)}">${escapeHTML(c.replace('_camera','').toUpperCase())} CAMERA</option>`).join('');
     $('camera-select').value=detail.cameras.includes('head_camera')?'head_camera':detail.cameras[0];
-    renderConstraints();renderEvents();renderProvenance();renderCharts();await frameImages();
+    renderCoverage();renderConstraints();renderEvents();renderProvenance();renderCharts();await frameImages();
   } catch(error) {if(token===state.loadToken)showError(`轨迹暂不可用：${error.message}`);}
 }
 function stop() {playToken++;state.playing=false;$('play').textContent='▶';$('play').setAttribute('aria-label','播放轨迹');}
@@ -133,6 +133,15 @@ async function frameImages() {
     while(state.frameCache.size>90){const key=state.frameCache.keys().next().value;URL.revokeObjectURL(state.frameCache.get(key));state.frameCache.delete(key);}
   } catch(error){if(error.name!=='AbortError'&&token===state.imageToken){$('frame-loading').textContent='画面加载失败，点击刷新重试';stop();}}
 }
+function renderCoverage() {
+  const report=state.detail.coverage;
+  $('coverage-status').textContent=report.complete?'运动全时段覆盖':`运动覆盖 ${(100*report.ratio).toFixed(1)}%`;
+  $('coverage-bars').innerHTML=['left','right'].map(arm=>{
+    const r=report.per_arm[arm],motion=r.position_or_motion;
+    const gaps=motion.gaps.map(([start,end])=>`<i class="coverage-gap" style="left:${100*(start-1)/report.total}%;width:${100*(end-start)/report.total}%" title="缺少几何约束 F${start}–${end-1}"></i>`).join('');
+    return `<div class="coverage-row"><span>${armName(arm)}</span><div class="coverage-track">${gaps}</div><b>${motion.covered} / ${motion.total}</b></div><p class="coverage-sub">朝向标注 ${(100*r.orientation.ratio).toFixed(0)}% · 夹爪标注 ${(100*r.gripper.ratio).toFixed(0)}% · 未标注自由度不额外限制</p>`;
+  }).join('');
+}
 function activationLabel(c) {
   const a=c.activation;
   return a.mode==='reference_event'?`${a.event.direction==='decreasing'?'闭合':'打开'}事件 · F${a.event.frame}`:a.mode==='endpoint'?`终点 · F${a.end-1}`:`区间 · F${a.start}–${a.end-1}`;
@@ -149,7 +158,7 @@ function renderConstraintDetail() {
   const c=selectedConstraint();if(!c){$('constraint-detail').innerHTML='';return;}
   const a=c.activation;const valid=c.reference_violation<=1e-6;
   const unit=c.unit==='fraction'?'比例':c.unit;
-  $('constraint-detail').innerHTML=`<div class="detail-label">允许区间 · ${unit}</div><div class="bounds">${fmt(c.parameters.bounds[0])}<span>↔</span>${fmt(c.parameters.bounds[1])}</div><div class="detail-row"><span>当前参考值</span><b id="current-feature">${fmt(c.values[state.frame])} ${unit}</b></div><div class="detail-row"><span>当前帧激活</span><b id="current-active">${c.active_frames.includes(state.frame)?'是':'否'}</b></div><div class="detail-row"><span>参考校验</span><b class="${valid?'mint':''}">${valid?'通过':'超出区间'}</b></div><div class="detail-row"><span>惩罚 / 尺度</span><b>${c.penalty.kind==='squared_hinge'?'平方 hinge':'四次 hinge'} / ${c.penalty.scale}</b></div><div class="evidence"><details><summary>标注依据与参考坐标系</summary><p>${escapeHTML(c.evidence.rationale)}</p><p class="mono">origin: [${c.reference_frame.origin_m.map(v=>fmt(v,4)).join(', ')}]<br>WXYZ: [${c.reference_frame.quaternion_wxyz.map(v=>fmt(v,3)).join(', ')}]</p>${a.mode==='endpoint'&&c.type.includes('displacement')?'<p>位移锚点必须在训练 chunk 内；缺少原始起点时屏蔽该约束。</p>':''}</details></div>`;
+  $('constraint-detail').innerHTML=`<div class="detail-label">${c.type==='motion_direction_cone'?'方向锥越界距离允许值':'允许区间'} · ${unit}</div><div class="bounds">${fmt(c.parameters.bounds[0])}<span>↔</span>${fmt(c.parameters.bounds[1])}</div><div class="detail-row"><span>当前参考值</span><b id="current-feature">${fmt(c.values[state.frame])} ${unit}</b></div><div class="detail-row"><span>当前帧激活</span><b id="current-active">${c.active_frames.includes(state.frame)?'是':'否'}</b></div><div class="detail-row"><span>参考校验</span><b class="${valid?'mint':''}">${valid?'通过':'超出区间'}</b></div><div class="detail-row"><span>惩罚 / 尺度</span><b>${c.penalty.kind==='squared_hinge'?'平方 hinge':'四次 hinge'} / ${c.penalty.scale}</b></div>${c.type==='motion_direction_cone'?`<div class="detail-row"><span>允许方向半角</span><b>${fmt(c.parameters.half_angle_rad*180/Math.PI,0)}°</b></div><div class="detail-row"><span>参考方向轴</span><b>[${c.parameters.axis.map(v=>fmt(v,2)).join(', ')}]</b></div><p class="coverage-note">作用于相邻末端位置之差；允许改变路径和步长。该项本身不保证到达目标。</p>`:''}<div class="evidence"><details><summary>标注依据与参考坐标系</summary><p>${escapeHTML(c.evidence.rationale)}</p><p class="mono">origin: [${c.reference_frame.origin_m.map(v=>fmt(v,4)).join(', ')}]<br>WXYZ: [${c.reference_frame.quaternion_wxyz.map(v=>fmt(v,3)).join(', ')}]</p>${a.mode==='endpoint'&&c.type.includes('displacement')?'<p>位移锚点必须在训练 chunk 内；缺少原始起点时屏蔽该约束。</p>':''}</details></div>`;
 }
 function renderEvents() {
   const d=state.detail;
@@ -228,7 +237,7 @@ async function refresh(initial=false) {
     if(initial){const hash=new URLSearchParams(location.hash.slice(1));state.view=hash.get('view')==='compare'?'compare':'inspect';const requested=hash.get('task');const task=state.summary.tasks.some(t=>t.id===requested)?requested:state.summary.tasks.find(t=>t.recorded)?.id||state.summary.tasks[0].id;await selectTask(task,Number(hash.get('episode')||0));}
     else if(state.task){const task=state.task,data=await request(api('episodes',{task}));if(task!==state.task)return;const hadData=state.episodes.length>0;state.episodes=data.episodes;episodeOptions();tabsUI();
       if(!hadData&&data.episodes.length)await loadEpisode(data.episodes[0].index);
-      else if(state.detail&&!state.detail.annotated&&data.episodes.find(e=>e.index===state.index)?.annotated&&!state.playing)await loadEpisode(state.index,true);}
+      else if(state.detail&&!state.playing){const current=data.episodes.find(e=>e.index===state.index);if(current&&(current.annotated&&!state.detail.annotated||current.revision>state.detail.revision))await loadEpisode(state.index,true);}}
   }catch(error){$('connection').innerHTML='<i></i>连接暂时中断';$('connection').classList.add('offline');showError(`无法同步数据：${error.message}。页面保留上次结果，稍后自动重试。`);}
   finally{state.refreshing=false;}
 }

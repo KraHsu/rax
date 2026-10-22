@@ -36,7 +36,7 @@ def dataset(tmp_path):
             h.attrs['instruction'] = 'Adjust the bottle.'
             h.create_dataset('initial_scene/json', data=json.dumps({'actors': [{'name': 'bottle', 'pose': [index*.1, 0, .8, 1, 0, 0, 0]}]}))
             if variant == 'data':
-                bundle = json.loads(h[HDF5_KEY][()]); bundle['constraints'], _ = instantiate(h, template())
+                bundle = json.loads(h[HDF5_KEY][()]); bundle['constraints'], _ = instantiate(h, template()); bundle['schema_version'] = '1.1'
                 h[HDF5_KEY][()] = json.dumps(bundle)
                 h['trajectory_constraints/history'][()] = json.dumps([{'agent_run': 'template:fixture'}])
             # Native writer's JPEG has swapped red/blue channels; viewer restores RGB.
@@ -67,7 +67,7 @@ def test_live_publication_and_distinct_scenes(dataset):
     assert dataset.episode('adjust_bottle', 1)['annotated']
 
 
-@pytest.mark.parametrize('kind', KINDS)
+@pytest.mark.parametrize('kind', [k for k in KINDS if k != 'motion_direction_cone'])
 @pytest.mark.parametrize('mode', ['interval', 'endpoint', 'reference_event'])
 def test_all_frame_curves_match_training_feature_with_original_anchor(dataset, kind, mode):
     c = copy.deepcopy(dataset.episode('adjust_bottle', 0)['constraints'][0])

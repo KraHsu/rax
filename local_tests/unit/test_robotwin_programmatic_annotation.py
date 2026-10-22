@@ -9,6 +9,7 @@ from services.robotwin.collection import atomic_json
 from services.robotwin.constraint_schema import HDF5_KEY, read_embedded
 from services.robotwin.programmatic_annotation import OutsideTemplate, instantiate, validate_template
 from services.robotwin.annotation_templates import install, match, refresh
+from services.robotwin.full_trajectory import PREFIX
 
 
 def rule(name, kind, selector, **kwargs):
@@ -55,7 +56,8 @@ def test_template_recomputes_each_pose_event_and_arm_without_fixed_indices(tmp_p
     outputs=[]
     for seed,offset,arm in [(0,0.,'left'),(3,.25,'right')]:
         with h5py.File(episode(tmp_path/f'{seed}.hdf5',seed,offset,arm)) as h:
-            constraints,audit=instantiate(h,template());outputs.append(constraints)
+            constraints,audit=instantiate(h,template());assert audit['coverage']['complete']
+            constraints=[c for c in constraints if not c['id'].startswith(PREFIX)];outputs.append(constraints)
             assert audit['signature']==['close']
             assert all(c['subject']==arm+'_eef' for c in constraints)
             assert constraints[0]['activation']['event']['frame']==seed+2
@@ -94,6 +96,7 @@ def test_extremum_is_reference_selected_and_orientation_is_radians(tmp_path):
     r['parameters']={'local_axis':[1,0,0],'reference_axis':[0,1,0]};t['rules'].append(r)
     with h5py.File(episode(tmp_path/'ep.hdf5')) as h:
         constraints,_=instantiate(h,t)
+        constraints=[c for c in constraints if not c['id'].startswith(PREFIX)]
         assert constraints[1]['activation']=={'mode':'endpoint','start':2,'end':3}
         assert np.allclose(constraints[-1]['parameters']['bounds'],np.pi/2+np.array([-.0872664626,.0872664626]))
 
@@ -128,7 +131,8 @@ def test_batch_publishes_constraints_and_leaves_agent_leases_untouched(tmp_path)
     results=run_once(tmp_path)
     assert len(results)==2
     with h5py.File(directory/'data/episode1.hdf5') as h:
-        assert len(read_embedded(h)['constraints'])==4
+        assert len([c for c in read_embedded(h)['constraints'] if not c['id'].startswith(PREFIX)])==4
+        assert json.loads(h['trajectory_constraints/coverage'][()])['complete']
         assert json.loads(h['trajectory_constraints/history'][()])[0]['agent_run'].startswith('template:')
     assert json.loads(lease.read_text())['claim_id']=='agent-existing'
     assert (directory/'raw/episode2.hdf5').exists()

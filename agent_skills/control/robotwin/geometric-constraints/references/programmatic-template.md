@@ -1,7 +1,7 @@
 # Reusable task template, version 1
 
-The task template is declarative JSON, not Python. It selects sparse geometric
-features and computes new bounds independently on every reference trajectory.
+The task template is declarative JSON, not Python. It selects task-relevant
+geometric features and computes new bounds independently on every reference trajectory.
 There are no operation classes. It must NOT contain frame numbers, measured
 coordinates, copied bounds, or inferred object contact/feasibility geometry.
 
@@ -84,11 +84,25 @@ the established operator priors: position ±0.005 m, angle ±0.0872664626 rad,
 gripper ±0.02; distances/angles/gripper are clipped to their valid domains.
 Penalty is squared hinge with that margin as scale. These values are reference
 envelopes, NOT physical tolerance calibration. You cannot widen these priors in
-the template. Avoid constraining an entire path unnecessarily.
+the template. Temporal coverage MUST include every action frame of both arms.
+This does not mean copying the demonstrated path: the executor automatically
+fills remaining position/motion gaps with `motion_direction_cone` for movement
+and a loose stationary hold region. Moving intervals allow a 60-degree half-angle
+around the measured segment direction, without absolute position/speed targets.
+Direction is split only when the reference turns outside the cone or stops.
+This coverage layer uses adjacent positions, so every action chunk can evaluate
+it from its own initial state. It is independent of old displacement anchors.
+
+The versioned defaults are `full_trajectory.POLICY`: direction slack 0.1 mm,
+stationary-step threshold 0.01 mm, and hold-region margin 20 mm. These are
+explicit starting priors, not calibrated physical success bounds. Existing
+accepted task-specific position regions take priority over coverage defaults.
+Orientation and gripper are constrained only where justified; full temporal
+coverage does not mean all degrees of freedom must be restricted.
 
 Run `./validate_task_template.py task_template.json` until it passes. This uses
 the same numeric implementation as the H200 executor on the review CSV. Output
-includes the generated constraints and their reference audit. Inspect the
+includes the generated constraints, reference audit, and full-coverage report. Inspect the
 selected frames and physical meanings as well; admitting the demonstration is
 necessary but does not prove semantic correctness or physical robustness.
 

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from services.robotwin.constraint_schema import HDF5_KEY, canonical_json, validate_constraint, validate_bundle, validate_reference_events
+from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json, validate_constraint, validate_bundle, validate_reference_events
 
 
 class EpisodeRecorder:
@@ -26,7 +26,7 @@ class EpisodeRecorder:
         self.handle.attrs['instruction'] = instruction
         self.length, self.revision, self.history = 0, 0, []
         self.cameras = None
-        self.bundle = {'schema_version': '1.0', 'action_contract': {
+        self.bundle = {'schema_version': SCHEMA_VERSION, 'action_contract': {
             'position': 'absolute', 'rotation': 'absolute', 'quaternion_order': 'wxyz',
             'gripper': 'absolute_open_fraction', 'frame': 'world'},
             'provenance': {'split': 'train', 'variant': 'clean_50', 'recording_id': recording_id,
@@ -109,6 +109,18 @@ class EpisodeRecorder:
             validate_bundle(self.bundle, self.length)
             validate_reference_events(self.bundle, self.handle)
             self.bundle['provenance']['native_success'] = bool(success)
+            if success:
+                import h5py
+                from services.robotwin.full_trajectory import complete_constraints
+                from services.robotwin.annotation import validate_reference_bounds
+                self.bundle['constraints'], coverage = complete_constraints(
+                    self.handle, self.bundle['constraints'], self.bundle['provenance']['recording_id'])
+                validate_bundle(self.bundle, self.length)
+                validate_reference_bounds(self.bundle, self.handle)
+                self.revision += 1
+                self.history.append({'revision': self.revision, 'agent_run': 'full-motion-coverage-v1',
+                                     'coverage': coverage, 'constraints': copy.deepcopy(self.bundle['constraints'])})
+                self.handle.create_dataset('trajectory_constraints/coverage', data=json.dumps(coverage), dtype=h5py.string_dtype())
             self._persist_annotations()
         finally:
             self.handle.close()
