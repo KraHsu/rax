@@ -56,6 +56,10 @@ Do not add arbitrary executable loss code or unrecognized base types. Existing
 types and their compositions can be parameterized and revised during recording.
 A new mathematical primitive requires a versioned implementation and tests.
 
+After the final movement ends the episode, you may still review/upsert annotations
+before calling `finish`; further physics is blocked. Use the final recorded frame
+count to check activation ranges and reference events.
+
 On successful episode finalization, observations and constraints are published
 in one HDF5 under the training dataset. Failed/interrupted recordings are kept
 outside data/. Formal evaluation cannot modify or generate training labels.

@@ -1,4 +1,4 @@
-"""RAX backend: clean exploration, frozen randomized evaluation, dynamic categories."""
+"""RAX backend: clean exploration, frozen randomized evaluation, constraint recording."""
 import base64
 import io
 import json
@@ -33,6 +33,7 @@ class RoboTwinBackend:
 
     def _packet(self, observation):
         packet = {k: v for k, v in observation.items() if k != 'images'}
+        packet['environment_spec'] = {'episode_step_limit': self.sim.metadata['native_step_limit']}
         images, attachments = [], []
         for camera, pixels in observation.get('images', {}).items():
             stream = io.BytesIO()
@@ -74,13 +75,13 @@ class RoboTwinBackend:
             result = self.sim.request('chunk_step', actions=arguments['actions'],
                                       action_type='ee' if name.endswith('_eef') else 'qpos')
             packet, images = self._packet(result['observation'])
-            packet.update(executed_rows=result['executed_rows'], stopped=result['stopped'])
+            packet.update(executed_rows=result['executed_rows'], episode_ended=result['stopped'])
             return packet, images
 
     def evaluate(self, agent_assessment=None, confidence=None):
         if self.sim.output_dir is None:
             raise RuntimeError('No episode to evaluate')
-        state = json.loads((self.sim.output_dir / 'sim' / 'operator_state.json').read_text())
+        state = self.sim.operator_state()
         if self.sim.finished and state.get('episode_id') == self.sim.episode_id:
             self.sim.step_id = max(self.sim.step_id, state['step_id'])
         if (state.get('episode_id'), state.get('step_id')) != (self.sim.episode_id, self.sim.step_id):

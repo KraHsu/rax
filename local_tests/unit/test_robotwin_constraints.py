@@ -143,3 +143,32 @@ def test_agent_workspace_has_constraint_template_and_no_broken_links(tmp_path):
     build(recipe_for(), Setup(contract, frozenset(), 'adjust_bottle'), workspace)
     assert (workspace/'.agents/skills/geometric-constraints/references/template.json').is_file()
     assert not broken_links(workspace) and not foreign_terms(workspace, 'robotwin')
+
+
+def test_terminal_episode_allows_annotation_but_not_physics(tmp_path):
+    from services.controller.gateway import Gateway
+    from services.mcp_contract import Contract
+    from services.robotwin.tools import validate_request
+    native = Native()
+    session = RoboTwinSession(lambda: native, task='fake', instruction='x', output=tmp_path/'sim',
+        native_step_limit=3, provenance={'collection':0}, recording_path=tmp_path/'data/episode.hdf5')
+    reset = session.dispatch('reset', {})
+    identity = dict(episode_id=reset['episode_id'], step_id=0)
+    session.dispatch('chunk_step', dict(identity, actions=[[0]*14]*2, action_type='qpos'))
+    identity['step_id'] = 2
+    class Backend:
+        validate = staticmethod(validate_request)
+        def call(self, name, args):
+            assert name == 'robotwin_constraints'
+            return session.dispatch('constraint_upsert', dict(identity, constraint=args['constraint'],
+                                                              expected_revision=args['expected_revision'])), []
+    gateway = Gateway(Backend(), None, audit=lambda _:None, charge=lambda *_:None, refund=lambda *_:None,
+                      budget=lambda:{}, contract=Contract(benchmark='robotwin', observation_profile='rgb-only'))
+    token = gateway.acquire(); gateway.terminal = True
+    def call(name, args):
+        return gateway.handle(token, {'jsonrpc':'2.0','id':1,'method':'tools/call',
+                                      'params':{'name':name,'arguments':args}})
+    assert 'result' in call('robotwin_constraints', dict(operation='upsert', constraint=template(), expected_revision=0))
+    assert 'error' in call('robotwin_step', {'actions':[[0]*14]})
+    assert native.take_action_cnt == 2
+    session.dispatch('finish_pilot', identity); session.close()

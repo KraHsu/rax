@@ -84,10 +84,19 @@ def receive_packet(sock):
 
 
 class RPCClient:
-    def __init__(self, host, port, timeout=300):
-        self.sock = socket.create_connection((host, int(port)), timeout=timeout)
+    def __init__(self, host, port, timeout=300, *, unix_path=None):
+        if unix_path is None:
+            self.sock = socket.create_connection((host, int(port)), timeout=timeout)
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        else:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(timeout)
+            try:
+                self.sock.connect(str(unix_path))
+            except BaseException:
+                self.sock.close()
+                raise
         self.sock.settimeout(timeout)
-        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def request(self, op, **kwargs):
         if self.sock is None:

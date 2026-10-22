@@ -21,6 +21,10 @@ def source_root():
 
 
 def task_names():
+    from .remote import catalog
+    remote = catalog()
+    if remote is not None:
+        return sorted(remote)
     try:
         root = source_root()
     except ValueError:
@@ -36,8 +40,11 @@ def check_task(task):
 
 def step_limit(task):
     check_task(task)
-    path = source_root() / 'task_config' / '_eval_step_limit.yml'
-    values = yaml.safe_load(path.read_text())
+    from .remote import catalog
+    values = catalog()
+    if values is None:
+        path = source_root() / 'task_config' / '_eval_step_limit.yml'
+        values = yaml.safe_load(path.read_text())
     limit = values.get(task)
     if type(limit) is not int or limit < 1:
         raise ValueError(f'Missing positive native step limit for {task}')

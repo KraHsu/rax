@@ -47,6 +47,7 @@ class Benchmark:
     robot: dict = field(default_factory=dict)
     partial_credit: bool = False    # Episodes are scored with partial credit, which workspaces may name.
     wall_limit: bool = True         # Episodes have a wall-clock limit (task_timeouts episode_seconds).
+    terminal_tools: frozenset = frozenset()  # Non-physics operations allowed before finalizing a terminal episode.
     episode_reviews: bool = False   # Simulator ground truth supports exploration episode reviews.
     # Live copies of a code-mode session get reports of its code's formal runs (replayed frames,
     # reviews; services/agent_formal/code_runs.py).
@@ -114,6 +115,7 @@ BENCHMARKS = {
         status_tool='robotwin_status', observe_tool='robotwin_observe', tool_prefixes=('robotwin_',),
         episode_tool_prefixes=('robotwin_',), simulator_modules=('services.robotwin.server',),
         startup_seconds=300, wall_limit=False,
+        terminal_tools=frozenset({'robotwin_constraints'}),
         robot={'benchmark': 'RoboTwin', 'status': 'robotwin_status', 'observe': 'robotwin_observe',
                'step': 'robotwin_step', 'plan': 'robotwin_step_eef', 'pixel': 'not_available',
                'hz': 'variable (one native command per row)', 'overview_camera': 'head_camera',

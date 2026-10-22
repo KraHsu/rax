@@ -1,6 +1,9 @@
 """GPU interpreter entry point. Never install dependencies automatically."""
 import argparse
 import os
+import signal
+import sys
+import threading
 from pathlib import Path
 from services.robotwin.catalog import EpisodeManifest, step_limit
 from services.robotwin.runtime import initialize_runtime, make_environment, native_config, source_commit
@@ -15,8 +18,25 @@ def main():
     parser.add_argument('--index', type=int, required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--manifest-sha256')
+    parser.add_argument('--watch-stdin', action='store_true')
     args = parser.parse_args()
+    if args.watch_stdin:
+        try:
+            os.setsid()
+        except PermissionError:
+            if os.getpgrp() != os.getpid():
+                raise
+        # The SSH owner holds stdin open. Disconnects also end a server still
+        # warming up, before its RPC socket exists. Never signal unrelated jobs.
+        def owner_disconnected():
+            while os.read(sys.stdin.fileno(), 1024):
+                pass
+            os.killpg(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=owner_disconnected, daemon=True).start()
     manifest = EpisodeManifest(args.manifest, args.task)
+    if args.manifest_sha256 and manifest.sha256 != args.manifest_sha256:
+        raise ValueError('Local and remote episode manifests differ')
     if source_commit() != manifest.source_commit:
         raise ValueError('RoboTwin source changed since manifest preparation')
     entry = manifest.entry(args.collection, args.index)

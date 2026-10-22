@@ -169,7 +169,8 @@ class Gateway:
         self.contract.require_robot(name, arguments)
         if self.simulator_exited and name not in {"gemini_generate"} | STATUS_TOOLS:
             raise PermissionError(f'The simulator is gone ({self.simulator_exited}); this episode cannot continue')
-        if self.terminal and name not in {"gemini_generate"} | STATUS_TOOLS | OBSERVE_TOOLS:
+        if self.terminal and name not in ({"gemini_generate"} | STATUS_TOOLS | OBSERVE_TOOLS
+                                         | self.contract.bench.terminal_tools):
             raise PermissionError('Episode has ended; further motion is blocked')
         if not isinstance(arguments, dict):
             raise ValueError("Arguments must be an object")

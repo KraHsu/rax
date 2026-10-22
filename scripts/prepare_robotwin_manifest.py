@@ -51,6 +51,8 @@ def main():
                     break
             except Exception as exc:
                 print(json.dumps({'seed': seed, 'skipped': str(exc)}), flush=True)
+                if isinstance(exc, (ImportError, FileNotFoundError, KeyError, AttributeError)):
+                    raise  # Dependency/configuration errors are not infeasible scenes.
             finally:
                 if native is not None:
                     native.close_env()

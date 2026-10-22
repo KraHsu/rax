@@ -48,6 +48,7 @@ def initialize_runtime():
     os.chdir(root)
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / 'script'))
+    sys.path.insert(0, str(root / 'description' / 'utils'))
     import torch
     torch.cuda.init()
     torch.zeros(1, device='cuda')

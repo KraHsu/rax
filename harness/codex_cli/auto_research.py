@@ -221,7 +221,9 @@ def deploy(config, *, provider_home, profile='openrouter', key_file=None, codex=
 
 
 def codex_binary(path=None):
-    binary = Path(path or shutil.which('codex') or '').resolve()
+    # Keep npm/nvm's bin directory on the isolated PATH: its codex symlink
+    # targets a JS file whose /usr/bin/env node needs the sibling node binary.
+    binary = Path(path or shutil.which('codex') or '').expanduser().absolute()
     if not binary.is_file():
         raise RuntimeError('Codex binary is required')
     return binary

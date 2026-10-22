@@ -61,3 +61,56 @@ The loss never runs simulation. Source command targets, achieved EEF samples
 and object dynamics are distinct: labels on recorded EEF trajectories cannot
 prove grasps, support or contact forces. Full native collection/evaluation is
 still required beyond the fake-environment and HDF5 integration tests.
+
+## Local Codex with a remote GPU simulator
+
+Codex and the RAX controller run on the operator's local machine. Only the native
+simulator runs on the GPU server. SSH forwards its loopback RPC socket into a
+private local Unix socket. Credentials stay local; HDF5 data stays remote.
+The operator state is mirrored for scoring, while only RGB/proprioception enters
+the agent's tool replies. A broken transport is never retried as an action.
+
+On the local machine, save an operator-only JSON configuration (e.g.
+`runtime/robotwin_remote.json`, ignored by git):
+
+```json
+{
+  "host": "operator@gpu-host",
+  "port": 22,
+  "rax_root": "/work/rax",
+  "python": "/existing/robotwin/env/bin/python",
+  "robotwin_path": "/work/RoboTwin",
+  "manifest": "/work/manifests/adjust_bottle.json",
+  "dataset_root": "/work/datasets/robotwin",
+  "output_root": "/work/rax-runs"
+}
+```
+
+Both machines need the same RAX code. Prepare the manifest on the server first,
+with at least as many entries as the requested exploration/formal counts. The
+launcher fetches only that small manifest and the native task step limits. Every
+episode checks that the local and remote manifest hashes match. Optional
+`pythonpath` (a list of remote directories) and `environment` allow existing
+simulator environment settings; neither is exposed to the agent.
+
+Run in a **normal local terminal** with Python 3.11+, NumPy, Pillow, msgpack,
+PyYAML and Jinja2, a logged-in Codex CLI, SSH access, and bubblewrap:
+
+```bash
+python scripts/run_robotwin_remote.py \
+  --remote-config runtime/robotwin_remote.json \
+  --task adjust_bottle --episodes 6 --formal-episodes 5 --sim-gpu 0
+```
+
+It uses the model from the local `~/.codex/config.toml` and links the existing
+ChatGPT login into this session's isolated Codex home. No login is copied to the
+server. External Gemini perception is disabled. The experiment remains in the
+foreground; Ctrl+C cleans up the local harness and remote episode. Resume with
+the same options plus `--resume /absolute/path/to/operator-input.json`.
+
+Local commands must be allowed to create Unix sockets and bubblewrap namespaces.
+An enclosing coding-agent command sandbox can prohibit these even when the normal
+terminal supports them. The launcher reports this during preflight; it does not
+disable RAX isolation. `--prepare-only` prepares metadata/configuration without
+starting Codex or an episode. Five formal scenes are a connectivity/policy pilot,
+not a statistically stable benchmark score.

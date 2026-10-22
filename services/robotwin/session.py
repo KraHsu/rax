@@ -1,5 +1,6 @@
 """One native episode, command budget, measured observations and operator record."""
 from pathlib import Path
+import json
 import uuid
 
 import numpy as np
@@ -64,6 +65,9 @@ class RoboTwinSession:
                       'Missing or stale episode/step identity')
         if op == 'observe':
             return self._observation()
+        if op == 'operator_state':
+            # Trusted host RPC only; never listed in the agent tool contract.
+            return json.loads((self.output / 'operator_state.json').read_text())
         if op == 'constraints_list':
             result = self.recorder.annotations() if self.recorder else {'revision': None, 'constraints': [], 'recording': False}
             return dict(result, episode_id=self.episode_id, step_id=self.step_id)

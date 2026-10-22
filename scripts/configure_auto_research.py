@@ -109,7 +109,11 @@ def main():
         parser.error('--recording-gib must be at least 1')
     apply_benchmark(parser, args)
     episode_seconds = benchmark_named(args.benchmark).task_timeouts(args.task)['episode_seconds']
-    devices = subprocess.check_output(['nvidia-smi', '--query-gpu=index,uuid', '--format=csv,noheader'], text=True)
+    if args.benchmark == 'robotwin':
+        from services.robotwin.remote import gpu_inventory
+        devices = gpu_inventory()
+    else:
+        devices = subprocess.check_output(['nvidia-smi', '--query-gpu=index,uuid', '--format=csv,noheader'], text=True)
     mapping = {}
     for line in devices.splitlines():
         index, identifier = map(str.strip, line.split(','))
