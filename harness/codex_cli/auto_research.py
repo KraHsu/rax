@@ -342,11 +342,20 @@ def agent_command(config, deployed, *, prompt, interactive=False, json_output=Fa
 
 def agent_environment(config, deployed, socket):
     """Codex's process environment: its session home, the robot socket and the agent's
-    Python; a key-based login's key for Codex itself."""
+    Python; operator proxies and a key-based login's key for Codex itself.
+
+    The host CLI needs the operator's route to the model API. Its tool subprocesses
+    still run under the separate, deny-by-default managed network proxy configured
+    by settings(); inheriting this route does not grant tools internet access.
+    """
     workspace = Path(deployed['workspace']).resolve()
     environment = agent_host.environment(home=workspace, workspace=workspace, socket=socket,
                                          cpus=config.training.cpus, binary=deployed['codex'])
     environment['CODEX_HOME'] = str(Path(deployed['codex_home']).resolve())
+    for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+                 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
+        if name in os.environ:
+            environment[name] = os.environ[name]
     login = json.loads(deployed['login'].read_text())
     if login.get('key_file'):
         environment[KEY_VARIABLE] = load_key(login['key_file'])

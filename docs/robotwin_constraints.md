@@ -108,6 +108,14 @@ server. External Gemini perception is disabled. The experiment remains in the
 foreground; Ctrl+C cleans up the local harness and remote episode. Resume with
 the same options plus `--resume /absolute/path/to/operator-input.json`.
 
+The native Codex process inherits the operator's `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY` and `NO_PROXY` environment variables (including lowercase variants).
+Set these in the shell launching RAX when the model endpoint requires a proxy.
+RAX's separate sandbox network policy still applies to agent tool subprocesses.
+If model discovery or workspace routing repeatedly times out, check the launch
+environment's proxy configuration before retrying; the local robot MCP socket
+and the remote SSH connection are separate from model API connectivity.
+
 Local commands must be allowed to create Unix sockets and bubblewrap namespaces.
 An enclosing coding-agent command sandbox can prohibit these even when the normal
 terminal supports them. The launcher reports this during preflight; it does not
