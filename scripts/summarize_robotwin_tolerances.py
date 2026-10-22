@@ -9,7 +9,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from services.robotwin.tolerance import bracket
+from services.robotwin.tolerance import bracket, measured_calibration_sample
 
 
 def joint_profile(root):
@@ -56,13 +56,16 @@ def summarize(root):
         if not path.is_dir() or not (path/'results.jsonl').exists():continue
         metadata=json.loads((path/'run.json').read_text())
         records=[json.loads(line) for line in (path/'results.jsonl').read_text().splitlines()]
+        reference=json.loads((path/'reference.json').read_text())
+        measured=[measured_calibration_sample(r,reference) for r in records]
         summary={'run':path.name,'metadata':metadata,'trials':len(records),
                  'source_results_sha256':hashlib.sha256((path/'results.jsonl').read_bytes()).hexdigest(),
                  'native_task_successes':sum(r.get('native_success',False) for r in records),
                  'successful_trials':sum(r['outcome']=='success' for r in records),
                  'planner_failures':sum(r['outcome']=='planner_failure' for r in records),
                  'unrealized_trials':sum(r.get('realized') is False for r in records),
-                 'baseline_outcomes':[r['outcome'] for r in records if r['phase'].startswith('baseline')]}
+                 'baseline_outcomes':[r['outcome'] for r in records if r['phase'].startswith('baseline')],
+                 'measured_feasible_samples':[s for s in measured if s is not None]}
         if path.name.endswith('_v2'):
             summary['replicated_command_brackets']={a:{str(s):bracket(records,a,s)
                     for s in ((1,) if a=='opening' else (-1,1))}

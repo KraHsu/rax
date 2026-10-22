@@ -1,5 +1,11 @@
 # Empirical tolerance validation — 2026-10-22
 
+Follow-up: [root-cause diagnosis and corrections](robotwin_tolerance_diagnosis_20261022.md).
+The command-tracking brackets below are historical measurements, not physical
+feasible intervals. In particular, a zero passing Z bracket did not mean zero
+physical Z freedom: successful measured upward offsets existed but were excluded
+by the tracking filter. Corrected summaries retain those measured samples.
+
 Three clean `adjust_bottle` scenes passed 120/120 joint-intervention tests in
 freshly initialized matching scenes. These tests included 16 corners repeated
 twice and eight interior samples per scene. Every case passed native task

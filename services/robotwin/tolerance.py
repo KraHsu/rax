@@ -3,6 +3,19 @@ import copy
 import numpy as np
 
 
+def retarget_position(target_pose, reference_object_in_eef, current_object_in_eef):
+    """Preserve the source object's target position and EEF target orientation.
+
+    Geometry is supplied by calibration, never inferred from model actions.
+    This is an offline intervention/continuation tool, not a training loss.
+    """
+    from services.robotwin.annotation import rotation
+    result=copy.deepcopy(target_pose)
+    correction=rotation(target_pose[3:])@(np.asarray(reference_object_in_eef)-current_object_in_eef)
+    result[:3]=(np.asarray(target_pose[:3])+correction).tolist()
+    return result
+
+
 def perturb_program(program, delta):
     """Freeze all expert targets; change only the declared grasp/final targets.
 
@@ -46,7 +59,8 @@ def features(samples, arm):
 
 def realization(reference, observed, delta):
     """Separate commanded offsets from actual geometry; collisions can saturate."""
-    measured, errors = {}, {}
+    measured, errors, tolerances = {}, {}, {}
+    requested_valid, orthogonal_valid = True, True
     valid = True
     if any(k.startswith('grasp_') for k in delta):
         actual = np.array(observed['grasp_end_xyz_m'])-reference['grasp_end_xyz_m']
@@ -54,12 +68,44 @@ def realization(reference, observed, delta):
             target = delta.get(key,0.)
             measured[key] = float(actual[i]); errors[key] = float(actual[i]-target)
             tolerance = max(.001,abs(target)*.1) if key in delta else .002
+            tolerances[key] = tolerance
             valid = valid and abs(errors[key]) <= tolerance
+            if key in delta:requested_valid = requested_valid and abs(errors[key]) <= tolerance
+            else:orthogonal_valid = orthogonal_valid and abs(errors[key]) <= tolerance
     if 'terminal_z' in delta:
         measured['terminal_z'] = observed['terminal_xyz_m'][2]-reference['terminal_xyz_m'][2]
         errors['terminal_z'] = measured['terminal_z']-delta['terminal_z']
-        valid = valid and abs(errors['terminal_z']) <= max(.001,abs(delta['terminal_z'])*.1)
-    return {'realized':bool(valid),'measured_offset_m':measured,'tracking_error_m':errors}
+        tolerances['terminal_z'] = max(.001,abs(delta['terminal_z'])*.1)
+        terminal_valid = abs(errors['terminal_z']) <= tolerances['terminal_z']
+        valid = valid and terminal_valid; requested_valid = requested_valid and terminal_valid
+    return {'realized':bool(valid),'requested_axes_realized':bool(requested_valid),
+            'orthogonal_drift_within_tolerance':bool(orthogonal_valid),
+            'measured_offset_m':measured,'tracking_error_m':errors,
+            'tracking_tolerance_m':tolerances,
+            'unrealized_axes':[key for key in errors if abs(errors[key])>tolerances[key]]}
+
+
+def measured_calibration_sample(record, reference):
+    """A successful execution validates its observed point, not its request.
+
+    Saturation and controller bias must not erase observed feasible geometry,
+    nor turn an unexecuted request into a physical allowance. Each point remains
+    conditional on its continuation; no Cartesian-product/interval claim follows.
+    """
+    observed=record.get('features',{})
+    point=observed.get('grasp_end_xyz_m')
+    if (record.get('outcome')!='success' or not record.get('native_success')
+            or not record.get('hold_success') or point is None):return None
+    point=np.asarray(point,dtype=float)
+    if point.shape!=(3,) or not np.isfinite(point).all():raise ValueError('Invalid measured grasp point')
+    return {'trial':record['trial'],'continuation':record.get('continuation','frozen'),
+            'requested_delta':copy.deepcopy(record['delta']),
+            'requested_geometry_realized':bool(record['realized']),
+            'grasp_end_xyz_m':point.tolist(),
+            'grasp_end_offset_m':(point-reference['grasp_end_xyz_m']).tolist(),
+            'reference_event_xyz_m':observed.get('closure_xyz_m'),
+            'terminal_xyz_m':observed['terminal_xyz_m'],
+            'scope':'Observed successful trajectory only; retain continuation and joint-feature dependencies.'}
 
 
 def initial_cases():

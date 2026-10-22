@@ -126,14 +126,20 @@ class Experiment:
             if not np.allclose(observed[key], self.initial[key], atol=1e-6, rtol=0):
                 raise RuntimeError(f'Physics checkpoint did not restore {key}')
 
+    def execute_program(self, program):
+        for self.stage, groups in enumerate(program):
+            self.original_move(*deserialize(groups))
+            if not self.native.plan_success: break
+
+    def trial_details(self):
+        return {}
+
     def trial(self, delta, phase):
         started = time.monotonic(); self.reset()
         record = {'trial':len(self.results), 'phase':phase, 'delta':delta, 'seed':self.seed}
         try:
             program = perturb_program(self.program, delta)
-            for self.stage, groups in enumerate(program):
-                self.original_move(*deserialize(groups))
-                if not self.native.plan_success: break
+            self.execute_program(program)
             self.sample()
             observed = features(self.samples,self.arm)
             end_success = bool(self.native.check_success())
@@ -147,7 +153,8 @@ class Experiment:
                           plan_success=bool(self.native.plan_success),
                           native_success=end_success, hold_success=held_success,
                           hold_seconds=125*self.native.scene.get_timestep(), hold_state=hold,
-                          features=observed, **realization(self.reference,observed,delta))
+                          features=observed, **realization(self.reference,observed,delta),
+                          **self.trial_details())
         except Exception as exc:
             record.update(outcome='execution_error', error=f'{type(exc).__name__}: {exc}')
             raise

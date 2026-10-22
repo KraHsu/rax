@@ -69,7 +69,11 @@ object/embodiment, reference pose, coordinate system, fixed orientation and
 frozen-program identity before using it. Keep requested command offsets separate
 from measured trajectory features: a successful command can be blocked by contact
 and never reach the requested pose. Exclude such trials from geometric boundary
-claims, and distinguish planning failure from executed task failure.
+claims about the REQUESTED pose. A successful trial still supplies its MEASURED
+pose as a feasible sample; do not discard that point because tracking is biased.
+Use `measured_feasible_samples` from the calibration report. A blocked -40 mm
+request that achieves -1 mm supplies only the -1 mm point. Distinguish planning
+failure, contact-limited tracking and executed task failure.
 
 Use joint-intervention evidence when composing axis bounds; individually
 successful extrema do not establish that their Cartesian product succeeds.
@@ -80,3 +84,14 @@ task verdict separately from additional stability/hold checks. Convert measured
 features into the recording's reference-only activation; never replace physical
 loss bounds directly with a requested-command-offset box. Gripper command
 fractions do not identify finger distance, force or contact.
+
+Calibration must state what happens after the perturbed pose. A frozen subsequent
+EEF target tests the whole frozen program. A native expert continuation recomputed
+from the actual grasp tests the grasp with that continuation. Never mix the two
+into one feasible set, or combine a broad grasp allowance from adaptive trials
+with a narrow fixed endpoint from a different grasp. Record the continuation in
+the evidence rationale/report; the training loss still uses action geometry only.
+For a disputed coupled failure, branch both continuations from the same saved
+post-grasp physics state and compare object/EEF relative geometry. Use the
+calibration checklist in `references/calibration-template.json` before proposing
+updated bounds. Extrema of successful points do not validate their box corners.

@@ -1,0 +1,31 @@
+{
+  "role": "calibration_review_not_training_constraint",
+  "recording_binding": {
+    "source_hdf5_sha256": "REPLACE",
+    "scene_seed": "REPLACE",
+    "object_model": "REPLACE",
+    "embodiment": "REPLACE",
+    "action_frame_and_units": "REPLACE",
+    "reference_event_frame": "REPLACE"
+  },
+  "evidence": {
+    "report_path": "REPLACE",
+    "continuation": "REPLACE: frozen full program OR expert recomputed after grasp",
+    "baseline_trial_ids": [],
+    "successful_measured_sample_ids": [],
+    "joint_intervention_trial_ids": [],
+    "failed_or_unexecuted_requests": [],
+    "native_verdict_and_hold_check": "REPLACE"
+  },
+  "feature_mapping": {
+    "measured_feature": "REPLACE: reference-event position, end-of-grasp position, etc.; these are distinct",
+    "recording_feature": "REPLACE with the same physical feature at the labeled recording frame",
+    "allowed_axis_or_coupled_region": "REPLACE using measured values; do not substitute command offsets",
+    "fixed_or_conditioned_coordinates": "REPLACE, including orientation and continuation dependencies",
+    "untested_interiors_or_combinations": "REPLACE"
+  },
+  "decision": {
+    "status": "proposed",
+    "rationale": "REPLACE. Successful measured points are evidence; their extrema alone do not validate an interval or Cartesian product."
+  }
+}

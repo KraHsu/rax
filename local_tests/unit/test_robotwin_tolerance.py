@@ -4,7 +4,18 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from services.robotwin.tolerance import bracket, features, perturb_program, realization
+from services.robotwin.tolerance import bracket, features, perturb_program, realization, measured_calibration_sample
+
+
+def test_retarget_preserves_object_goal_under_rotated_eef_and_changed_grasp():
+    from services.robotwin.tolerance import retarget_position
+    from services.robotwin.annotation import rotation
+    pose=[.1,.2,.3,np.sqrt(.5),np.sqrt(.5),0.,0.]
+    before=copy.deepcopy(pose);old=np.array([.12,0.,.02]);new=np.array([.11,.01,-.06])
+    corrected=retarget_position(pose,old,new)
+    assert pose==before and corrected[3:]==pose[3:]
+    assert np.allclose(np.array(pose[:3])+rotation(pose[3:])@old,
+                       np.array(corrected[:3])+rotation(corrected[3:])@new)
 
 
 def test_interventions_freeze_lift_and_change_only_selected_targets():
@@ -38,6 +49,28 @@ def test_contact_saturated_offset_is_not_a_valid_geometric_test():
     observed={'grasp_end_xyz_m':[0,0,.999]}
     checked=realization(reference,observed,{'grasp_z':-.04})
     assert not checked['realized'] and np.isclose(checked['measured_offset_m']['grasp_z'],-.001)
+    assert not checked['requested_axes_realized'] and checked['unrealized_axes']==['grasp_z']
+
+
+def test_orthogonal_drift_is_not_misreported_as_a_failed_requested_axis():
+    reference={'grasp_end_xyz_m':[0,0,1]}
+    observed={'grasp_end_xyz_m':[.003,0,1.0025]}
+    checked=realization(reference,observed,{'grasp_z':.0025})
+    assert checked['requested_axes_realized']
+    assert not checked['realized'] and not checked['orthogonal_drift_within_tolerance']
+    assert checked['unrealized_axes']==['grasp_x']
+
+
+def test_calibration_keeps_realized_point_without_certifying_unexecuted_request():
+    ref={'grasp_end_xyz_m':[0.,0.,1.]}
+    r={'trial':1,'delta':{'grasp_z':-.04},'realized':False,'outcome':'success',
+       'native_success':True,'hold_success':True,
+       'features':{'grasp_end_xyz_m':[0.,0.,.999], 'terminal_xyz_m':[0.,0.,1.2]}}
+    sample=measured_calibration_sample(r,ref)
+    assert np.allclose(sample['grasp_end_offset_m'],[0,0,-.001])
+    assert not sample['requested_geometry_realized']
+    r['hold_success']=False
+    assert measured_calibration_sample(r,ref) is None
 
 
 def test_bracket_rejects_a_boundary_that_fails_on_repeat():

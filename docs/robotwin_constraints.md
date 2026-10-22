@@ -188,6 +188,13 @@ attempts, with infrastructure errors reported separately.
 
 ## Empirical tolerance validation
 
+Use the [diagnosis and corrected calibration workflow](robotwin_tolerance_diagnosis_20261022.md)
+when interpreting scans. Successful measured points remain useful when a command
+has tracking bias; they validate the observed point, not the unexecuted request.
+Grasp calibration must identify its continuation. The diagnostic runner compares
+frozen, native adaptive, and object-position-compensated continuations from the
+same grasp checkpoint; no simulation is added to the training loss.
+
 On the existing native GPU environment, scan clean expert targets without writing
 training HDF5:
 
