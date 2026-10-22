@@ -42,9 +42,33 @@ are loopback only; this is a private local website, not a public deployment.
 - **Action inspection:** absolute world EEF XYZ, gripper command fractions,
   left/right/both-arm curves, and projected EEF trajectories. The projection is a
   visualization of measured positions, not simulated motion.
+- **Constraint overlays:** enabled by default in **动作与约束**. Click a constraint's
+  activation lane or the inspector to select it and seek to its first active frame.
+  The lane and action chart share a frame axis. **随帧切换约束** follows active
+  constraints during playback; disable it to pin the selected constraint. The
+  action selector offers XYZ, gripper, and **所选约束量**. Axis-aligned position and
+  gripper bounds appear directly on their curves, with event/endpoint bounds only
+  on the actual activation frame. Arbitrary oblique axes and angles use their
+  scalar physical feature rather than independent XYZ or Euler bounds.
+- **Spatial geometry:** **空间约束** displays the selected active sphere/shell,
+  axial slab, cylindrical shell, motion cone, or axis-angle cone. Switch between
+  local constraint detail and the full trajectory, and between XYZ/XY/XZ
+  projections. A motion cone starts at the previous measured EEF position and
+  indicates direction only: the displayed length is illustrative, not a target or
+  step-size limit. Its wireframe shows the cone body; the near-apex slack is
+  represented precisely by the scalar bounds. Gold arrows indicate measured
+  movement/current orientation; dashed orientation axes retain the original
+  angular-displacement anchor. Slabs/cylinders are unbounded in their free directions.
 - **Constraint inspection:** each composable primitive's allowed interval,
   activation frames, reference feature, bounds check, penalty, evidence, and fixed
   coordinate frame. Displacement plots preserve the annotated original anchor.
+  Feature plots show active samples only, so large hypothetical values outside the
+  supervised interval cannot hide a small allowed band. Angles are displayed in
+  degrees and direction-cone violation in millimetres; stored values and exported
+  annotations keep their original units. Active violations are marked red. Sphere
+  XYZ bands are outer projections, explicitly labeled as such: they do not make
+  three independent intervals a sufficient feasibility test. Multiple constraints
+  can overlap; the overlay shows one selected constraint at a time.
 - **Coverage:** position/motion coverage for every arm/action frame, with gaps
   highlighted. Orientation and gripper coverage are separate; full temporal
   coverage does not fix all degrees of freedom. Ordinary movement constrains
@@ -85,6 +109,7 @@ python -m services.dataset_viewer.server --root /path/to/robotwin_clean50_v1 --p
 ```bash
 ../.venv/bin/python -m pytest local_tests/unit/test_dataset_viewer.py -q
 node --check services/dataset_viewer/static/app.js
+node --test local_tests/unit/test_dataset_viewer_frontend.cjs
 ```
 
 Tests cover the original seven feature types across all three activation modes, nonzero
@@ -94,3 +119,6 @@ immutability. The service exposes GET-only endpoints under `/api/health`,
 `/api/summary`, `/api/episodes`, `/api/episode`, `/api/frame`, and `/api/video`.
 Direction cones and short-chunk coverage have additional tests in
 `test_robotwin_full_coverage.py` and the OpenWAM loss tests.
+The Node tests exercise physical overlay geometry, rotated/signed frames, original
+anchors, activation gaps, signal/arm following, pinning, and overlay toggling with
+a minimal DOM. They are not a substitute for browser layout verification.
