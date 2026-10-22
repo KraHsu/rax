@@ -80,6 +80,11 @@ class Benchmark:
     def planning_only(self, name, arguments):
         return name in self.previewable and isinstance(arguments, dict) and arguments.get('preview_only') is True
 
+    def startup_limit(self, task):
+        """Optional operator configuration; adapters otherwise keep their default."""
+        hook = getattr(self._hooks(), 'startup_limit', None)
+        return hook(task) if hook else self.startup_seconds
+
     def definitions(self):
         return [t for t in self._hooks().tool_definitions() if t['name'] in self.robot_tools]
 

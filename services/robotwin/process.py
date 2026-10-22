@@ -35,6 +35,8 @@ class RoboTwinProcess:
         python = os.environ.get('ROBOTWIN_PYTHON')
         from services.robotwin import remote
         self.remote = remote.configuration()
+        if self.remote:
+            startup_timeout = self.remote.get('startup_timeout_seconds', startup_timeout)
         if self.remote is None and (not python or not Path(python).is_file()):
             raise ValueError('Set ROBOTWIN_PYTHON to an existing simulator environment interpreter')
         manifest = configured_manifest(task)
@@ -90,6 +92,9 @@ class RoboTwinProcess:
             self.rpc = RPCClient('127.0.0.1', port[0], timeout=startup_timeout, unix_path=unix_path)
             self.metadata = simulator_request(self, 'metadata')
             result = simulator_request(self, 'reset')
+            # Cold renderer/planner initialization may be slow on shared hosts.
+            # Subsequent robot RPCs retain the normal bounded action timeout.
+            self.rpc.set_timeout(300)
             self.episode_id, self.step_id, self.finished = result['episode_id'], result['step_id'], False
             self.startup_seconds = time.monotonic()-started
             return result

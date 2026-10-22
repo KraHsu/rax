@@ -13,7 +13,13 @@ def backend(config):
 
 
 def task_timeouts(task):
-    return {'native_step_limit': step_limit(task), 'episode_seconds': None, 'startup_seconds': 300}
+    return {'native_step_limit': step_limit(task), 'episode_seconds': None, 'startup_seconds': startup_limit(task)}
+
+
+def startup_limit(task):
+    from services.robotwin.remote import configuration
+    config = configuration()
+    return config.get('startup_timeout_seconds', 300) if config else 300
 
 
 def validate_config(config):

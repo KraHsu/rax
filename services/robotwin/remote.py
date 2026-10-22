@@ -19,6 +19,9 @@ def configuration():
     for key in ('rax_root', 'python', 'robotwin_path', 'manifest', 'dataset_root', 'output_root'):
         if not PurePosixPath(data[key]).is_absolute() or '\n' in data[key]:
             raise ValueError(f'Remote {key} must be an absolute path')
+    timeout = data.get('startup_timeout_seconds', 300)
+    if type(timeout) is not int or not 1 <= timeout <= 1800:
+        raise ValueError('startup_timeout_seconds must be an integer in [1,1800]')
     return data
 
 

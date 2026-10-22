@@ -66,6 +66,28 @@ def test_local_codex_launcher_keeps_nvm_node_directory(tmp_path):
     assert str(install) in env['PATH'].split(':')
 
 
+@pytest.mark.parametrize('timeout', [0, 1801, True, '900'])
+def test_startup_timeout_is_bounded_operator_configuration(tmp_path, monkeypatch, timeout):
+    path=tmp_path/'remote.json'; path.write_text(json.dumps(dict(config(), startup_timeout_seconds=timeout)))
+    monkeypatch.setenv('ROBOTWIN_REMOTE_CONFIG',str(path))
+    with pytest.raises(ValueError, match='startup_timeout_seconds'):
+        remote.configuration()
+
+
+def test_operator_startup_limit_reaches_supervisor_and_task_metadata(tmp_path, monkeypatch):
+    from services.benchmarks import BENCHMARKS
+    path = tmp_path/'remote.json'
+    path.write_text(json.dumps(dict(config(), startup_timeout_seconds=600)))
+    monkeypatch.setenv('ROBOTWIN_REMOTE_CONFIG', str(path))
+    bench = BENCHMARKS['robotwin']
+    assert bench.startup_limit('adjust_bottle') == 600
+    assert bench.task_timeouts('adjust_bottle')['startup_seconds'] == 600
+    for name in ('robodojo', 'behavior'):
+        assert BENCHMARKS[name].startup_limit('unused') == BENCHMARKS[name].startup_seconds
+    monkeypatch.delenv('ROBOTWIN_REMOTE_CONFIG')
+    assert bench.startup_limit('adjust_bottle') == 300
+
+
 def test_rpc_over_forwarded_unix_socket_preserves_arrays_and_identity(tmp_path):
     import numpy as np
     path = tmp_path/'sim.sock'
@@ -95,7 +117,7 @@ def test_ssh_process_keeps_raw_rpc_private_and_mirrors_operator_verdict(tmp_path
     from services.robotwin import process
     from services.simulator import protocol
     monkeypatch.setattr(agent_host, 'SOCKETS', tmp_path/'private-sockets')
-    monkeypatch.setattr(remote, 'configuration', config)
+    monkeypatch.setattr(remote, 'configuration', lambda:dict(config(), startup_timeout_seconds=900))
     monkeypatch.setattr(process, 'configured_manifest', lambda task:SimpleNamespace(
         path=tmp_path/'manifest.json', sha256='a'*64, entry=lambda *_:{}))
     children = []
@@ -113,6 +135,7 @@ def test_ssh_process_keeps_raw_rpc_private_and_mirrors_operator_verdict(tmp_path
     monkeypatch.setattr(process.subprocess, 'Popen', Child)
     class Client:
         def __init__(self, *_, unix_path, **kwargs):
+            assert kwargs['timeout'] == 900
             assert unix_path.parent.parent == agent_host.SOCKETS
             exposed = agent_host.socket_path(tmp_path/'sessions/run').parent
             assert not unix_path.is_relative_to(exposed)
@@ -123,6 +146,7 @@ def test_ssh_process_keeps_raw_rpc_private_and_mirrors_operator_verdict(tmp_path
             if op == 'operator_state': result['reward'] = {'native_success':False}
             return result
         def close(self): pass
+        def set_timeout(self, value): assert value == 300
     monkeypatch.setattr(protocol, 'RPCClient', Client)
     sim = process.RoboTwinProcess(output_root=tmp_path/'results')
     try:

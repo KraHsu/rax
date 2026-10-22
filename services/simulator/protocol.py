@@ -98,6 +98,11 @@ class RPCClient:
                 raise
         self.sock.settimeout(timeout)
 
+    def set_timeout(self, timeout):
+        if self.sock is None:
+            raise RuntimeError('RPC client closed')
+        self.sock.settimeout(timeout)
+
     def request(self, op, **kwargs):
         if self.sock is None:
             raise RuntimeError("RPC client closed; create a client and reset")

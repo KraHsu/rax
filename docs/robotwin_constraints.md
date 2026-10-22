@@ -122,3 +122,62 @@ terminal supports them. The launcher reports this during preflight; it does not
 disable RAX isolation. `--prepare-only` prepares metadata/configuration without
 starting Codex or an episode. Five formal scenes are a connectivity/policy pilot,
 not a statistically stable benchmark score.
+
+On hosts where cold SAPIEN/cuRobo initialization exceeds five minutes, the
+operator remote JSON may set `startup_timeout_seconds` (1..1800; default 300).
+This applies to process readiness and reset only. After reset, robot RPCs return
+to their 300-second timeout. No failed action is automatically retried.
+
+## Native expert data with offline RAX annotation
+
+When autonomous RAX control is the bottleneck, use RoboTwin's own successful
+expert plan and replay recording. This keeps its native `save_freq` sampling
+and `merge_pkl_to_hdf5_video` writer. It is separate from the sparse observations
+recorded at RAX command boundaries. Collection accepts **only clean** manifest
+entries; randomized scenes remain evaluation-only.
+
+On the existing simulator host (set `ROBOTWIN_PATH` and select a free GPU):
+
+```bash
+python scripts/collect_robotwin_expert.py --task adjust_bottle \
+  --manifest /work/manifests/adjust_bottle_pilot.json --indices 0 \
+  --output /work/datasets/robotwin_expert/adjust_bottle/aloha-agilex_clean_50
+python scripts/robotwin_annotations.py export \
+  --episode /work/datasets/robotwin_expert/adjust_bottle/aloha-agilex_clean_50/data/episode0.hdf5 \
+  --output /work/reviews/adjust_bottle_0
+```
+
+The collector validates both expert planning and recording replay before
+publishing the episode. Failed staging data stays outside `data/`. An empty
+embedded constraint bundle initially records provenance; it supplies no training
+constraint until accepted annotations are added.
+
+Copy just the review directory to the operator machine. It contains measured
+world XYZ + WXYZ, gripper openings, native frame indices, threshold events, and
+selected RGB previews. It contains no simulator object poses or task code. Run:
+
+```bash
+python scripts/run_robotwin_annotation.py --review runtime/reviews/adjust_bottle_0 \
+  --output runtime/annotations/adjust_bottle_0
+```
+
+This reuses RAX's native Codex environment and sandbox with an offline task and
+the geometric constraint skill. The agent writes `agent-workspace/annotations.json`
+and `REPORT.md`; it has no live robot MCP. Copy the proposal back to the data host:
+
+```bash
+python scripts/robotwin_annotations.py embed --episode /work/datasets/robotwin_expert/adjust_bottle/aloha-agilex_clean_50/data/episode0.hdf5 \
+  --proposal /work/reviews/adjust_bottle_0/annotations.json --agent-run adjust_bottle_0
+```
+
+Embedding checks the source SHA-256, schema, frame ranges, real reference gripper
+crossings, and whether each accepted interval admits the source trajectory. It
+uses a per-episode lock and atomic replacement, preserving revision history in
+the same HDF5. A failed check leaves the episode unchanged. The same embedded
+schema is consumed by OpenWAM without another label file.
+
+Initial annotation priors are 5 mm position margin, 5 degrees angular margin,
+and 0.02 opening fraction. They define reference envelopes, not measured physical
+tolerance or a verified grasp volume. The agent must explain their use and mark
+unsupported geometric claims proposed/unknown, which training ignores. Native
+expert success, annotation validity, and C2R policy success are different metrics.

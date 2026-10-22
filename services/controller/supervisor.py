@@ -426,7 +426,7 @@ class Supervisor:
             self._begin_recording("interactive", uuid.uuid4().hex)
             token = self._connect()
             self._interactive_token = token
-            with deadline(for_config(self.config).startup_seconds):
+            with deadline(for_config(self.config).startup_limit(self.config.task)):
                 value, _ = self.backend.start(formal=False, seed=self.config.exploration_seeds[index])
             self.audit({"event": "episode_start", "mode": "interactive", "result": sanitized(value)})
             self._boundary("start", token)
@@ -437,7 +437,7 @@ class Supervisor:
             return self.gateway, token
         except BaseException as exc:
             # A missed startup deadline is a BaseException no tool handler would report: name the limit.
-            limit = for_config(self.config).startup_seconds
+            limit = for_config(self.config).startup_limit(self.config.task)
             reported = (TimeoutError(f"The environment did not start within its {limit:g}s startup limit")
                         if isinstance(exc, ExecutionDeadline) else exc)
             # The operator's record keeps why the episode did not start; a stop is not a failure.
@@ -921,7 +921,7 @@ class Supervisor:
         token = None
         try:
             with timings.measure('environment_setup_seconds'):
-                with deadline(stage_limit(limits, 'environment_setup', for_config(self.config).startup_seconds)):
+                with deadline(stage_limit(limits, 'environment_setup', for_config(self.config).startup_limit(self.config.task))):
                     token = self._connect()
                     seed = self.config.formal_seed + formal_index if formal else self.config.exploration_seeds[index]
                     self.backend.start(formal=formal, seed=seed)
@@ -959,7 +959,7 @@ class Supervisor:
                 result.update(reason="episode_ended", finalization_timeout=True)
             elif result.get("reason") == "timeout":
                 result.update(reason="timeout", error_type="TimeoutError", timeout_stage=timeout_stage,
-                              timeout_seconds=stage_limit(limits, timeout_stage, for_config(self.config).startup_seconds))
+                              timeout_seconds=stage_limit(limits, timeout_stage, for_config(self.config).startup_limit(self.config.task)))
             try:
                 if setup_complete and result.get("reason") not in ("timeout", "session_stopped"):
                     timeout_stage = 'evaluation'
@@ -978,7 +978,7 @@ class Supervisor:
                     result["task_complete"] = None
             except ExecutionDeadline:
                 result.update(reason="timeout", error_type="TimeoutError", task_complete=None, timeout_stage=timeout_stage,
-                              timeout_seconds=stage_limit(limits, timeout_stage, for_config(self.config).startup_seconds))
+                              timeout_seconds=stage_limit(limits, timeout_stage, for_config(self.config).startup_limit(self.config.task)))
             except Exception as exc:
                 result.update(evaluation_error=type(exc).__name__, task_complete=None,
                               evaluation_failure=public_failure(exc, operation=mode, stage='evaluation'))
