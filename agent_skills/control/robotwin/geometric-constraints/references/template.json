@@ -1,0 +1,17 @@
+{
+  "id": "axis_0",
+  "type": "axis_position_interval",
+  "subject": "left_eef",
+  "reference_frame": {"origin_m": [0.0, 0.0, 0.0], "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
+  "parameters": {"axis": [0.0, 0.0, 1.0], "bounds": [-0.03, 0.04]},
+  "activation": {
+    "mode": "reference_event", "start": 0, "end": 6,
+    "event": {"frame": 5, "direction": "decreasing", "threshold": 0.5}
+  },
+  "penalty": {"kind": "squared_hinge", "scale": 0.01, "weight": 1.0},
+  "evidence": {
+    "source": "agent_annotation", "status": "proposed",
+    "report_id": "REPLACE_WITH_RECORDING_REPORT",
+    "rationale": "EXAMPLE ONLY: replace origin, axes, bounds and frames with grounded recording annotations."
+  }
+}

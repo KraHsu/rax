@@ -23,6 +23,8 @@ BEHAVIOR_TOOLS = frozenset({
     'behavior_free_space_move', 'behavior_execute_motion_plan', 'behavior_pixel_to_position',
     'behavior_preview_describe', 'behavior_preview_run',
 })
+ROBOTWIN_TOOLS = frozenset({'robotwin_status', 'robotwin_observe', 'robotwin_step',
+                           'robotwin_step_eef', 'robotwin_constraints'})
 
 
 @dataclass(frozen=True, eq=False)  # Identity: entries are singletons with dict fields.
@@ -105,6 +107,27 @@ HOOKS = frozenset({
 })
 
 BENCHMARKS = {
+    'robotwin': Benchmark(
+        name='robotwin', label='RoboTwin', adapter='services.robotwin.benchmark',
+        robot_tools=ROBOTWIN_TOOLS, geometry_tools=frozenset(), unscoped_tools=frozenset(),
+        mutating=frozenset({'robotwin_step', 'robotwin_step_eef'}), previewable=frozenset(),
+        status_tool='robotwin_status', observe_tool='robotwin_observe', tool_prefixes=('robotwin_',),
+        episode_tool_prefixes=('robotwin_',), simulator_modules=('services.robotwin.server',),
+        startup_seconds=300, wall_limit=False,
+        robot={'benchmark': 'RoboTwin', 'status': 'robotwin_status', 'observe': 'robotwin_observe',
+               'step': 'robotwin_step', 'plan': 'robotwin_step_eef', 'pixel': 'not_available',
+               'hz': 'variable (one native command per row)', 'overview_camera': 'head_camera',
+               'overview': 'head', 'cameras': ('head_camera', 'left_camera', 'right_camera')},
+        planner_files=('services/robotwin/session.py', 'services/robotwin/runtime.py',
+                       'services/robotwin/tools.py'), vocabulary=r'robotwin_|\bRoboTwin\b',
+        task_tag='RoboTwin', layout_note='Clean exploration; frozen programs on randomized held-out episodes.',
+        setup_defaults={'formal_episodes': 100, 'formal_workers': 1, 'formal_eval_seed': 1,
+                        'exploration_start_seed': 0, 'demonstration_context': 'none'},
+        fixed={'episode_reviews': ('off', 'Native results and embedded constraint histories are recorded separately.'),
+               'demonstration_context': ('none', 'No demonstration provisioning in the RoboTwin adapter.'),
+               'task_rules': ('public', 'Instructions come from the operator-owned episode manifest.'),
+               'observation_profile': ('rgb-only', 'Initial RoboTwin adapter exposes RGB and measured proprioception.')},
+    ),
     'robodojo': Benchmark(
         name='robodojo', label='RoboDojo', adapter='services.robodojo.benchmark',
         robot_tools=ROBODOJO_TOOLS, geometry_tools=frozenset({'robodojo_pixel_to_position'}),
