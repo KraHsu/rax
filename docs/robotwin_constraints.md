@@ -185,3 +185,42 @@ expert success, annotation validity, and C2R policy success are different metric
 The [2026-10-22 pilot](robotwin_pilot_20261022.md) records native expert collection,
 local annotation, an OpenWAM loss/backward audit, and five randomized controller
 attempts, with infrastructure errors reported separately.
+
+## Empirical tolerance validation
+
+On the existing native GPU environment, scan clean expert targets without writing
+training HDF5:
+
+```bash
+python scripts/validate_robotwin_tolerances.py \
+  --manifest /work/manifests/adjust_bottle_pilot.json --index 0 \
+  --output /work/validation/seed0
+```
+
+The current runner is task-specific to `adjust_bottle`. It captures the native
+expert target program, restores a PhysX snapshot plus joint drive targets and
+gripper command state between trials, and requires three successful baseline
+replays with <=2 mm feature drift. It scans requested offsets, checks achieved
+geometry, refines observed brackets, tests combinations, repeats boundary points,
+and checks another baseline afterward. A 0.5-second hold supplements the native
+end-of-program task verdict. Planning, task and tracking failures are distinct.
+
+Use `--program-from /work/validation/seed0 --cases-json cases.json` to test an
+existing frozen program after fresh scene initialization. The scene identity and
+initial geometry must match. `cases.json` is a list of dictionaries with optional
+`grasp_x`, `grasp_y`, `grasp_z`, `terminal_z` (world metres) and `opening` (command
+fraction). `--baseline-only` checks the reset/replay procedure alone. Outputs must
+be new directories. The runner stores measured JSON traces and results; it does
+not update the original training annotations.
+
+After copying only small result/metadata files to the development machine:
+
+```bash
+python scripts/summarize_robotwin_tolerances.py --root runtime/tolerance_study/server \
+  --output runtime/tolerance_study/analysis --plot
+```
+
+`--plot` needs Matplotlib only on the reporting machine. See the
+[514-trial validation report](robotwin_tolerance_20261022.md) for the measured
+limits, joint confirmation, and the distinction between command and action-data
+coordinates.

@@ -39,7 +39,7 @@ Base types and parameter units:
 | axis_angle_interval | angle between EEF local axis and reference direction | local_axis, reference_axis, bounds in rad |
 | axis_displacement_interval | projected displacement from activation.start | axis, bounds in m |
 | angular_displacement_interval | rotation angle from activation.start | bounds in rad |
-| gripper_interval | absolute opening, 0=closed and 1=open | bounds in [0,1] |
+| gripper_interval | absolute gripper command fraction, 0=closed and 1=open; not measured finger distance | bounds in [0,1] |
 
 `reference_frame` is a fixed transform into world coordinates: origin in metres
 and quaternion WXYZ. Its axes are converted to world directions. A moving object
@@ -63,3 +63,20 @@ count to check activation ranges and reference events.
 On successful episode finalization, observations and constraints are published
 in one HDF5 under the training dataset. Failed/interrupted recordings are kept
 outside data/. Formal evaluation cannot modify or generate training labels.
+
+When an operator supplies a simulation calibration report, check its scene,
+object/embodiment, reference pose, coordinate system, fixed orientation and
+frozen-program identity before using it. Keep requested command offsets separate
+from measured trajectory features: a successful command can be blocked by contact
+and never reach the requested pose. Exclude such trials from geometric boundary
+claims, and distinguish planning failure from executed task failure.
+
+Use joint-intervention evidence when composing axis bounds; individually
+successful extrema do not establish that their Cartesian product succeeds.
+Record repeated failures, disagreement between repeats, and search limits without
+observed failure. Finite successful samples are conditional empirical evidence,
+not proof of every interior point or a global feasible set. Preserve the native
+task verdict separately from additional stability/hold checks. Convert measured
+features into the recording's reference-only activation; never replace physical
+loss bounds directly with a requested-command-offset box. Gripper command
+fractions do not identify finger distance, force or contact.
