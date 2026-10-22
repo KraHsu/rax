@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RoboTwin · Dataset Atlas</title><meta name="description" content="查看 RoboTwin clean 训练轨迹、初始场景与几何约束。">
+  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Dataset Atlas 首页"><span class="brand-mark"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M5 19V9l9-5 9 5v10l-9 5zM5 9l9 5 9-5M14 14v10M9 7l9 5"/></svg></span><span>RoboTwin <b>Dataset Atlas</b></span></a>
+    <div class="top-actions"><span class="tag">CLEAN / 50 × 50</span><span id="connection" class="connection"><i></i>连接数据源</span><button id="refresh" class="icon-button" title="刷新数据" aria-label="刷新数据">↻</button></div>
+  </header>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-heading"><span class="eyebrow">TASK LIBRARY</span><span id="task-count" class="muted mono">50 TASKS</span></div>
+      <h1>任务数据集</h1>
+      <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="search" type="search" placeholder="搜索任务 / Search tasks" aria-label="搜索任务"></label>
+      <div class="filter-group" aria-label="任务筛选"><button data-filter="all" class="active">全部</button><button data-filter="running">采集中</button><button data-filter="ready">已完成</button></div>
+      <nav id="task-list" class="task-list" aria-label="RoboTwin 任务"><div class="empty">正在读取任务清单…</div></nav>
+      <div class="sidebar-footer"><span class="small-orbit"></span><div>原生专家 · 成功轨迹<small>RAX 几何约束标注</small></div><span class="read-only">只读</span></div>
+    </aside>
+    <main>
+      <section class="overview" aria-label="采集概览">
+        <div class="overview-intro"><div class="eyebrow">COLLECTION OVERVIEW</div><h2>让每一条演示都可见<span class="dot">.</span></h2><p id="dataset-line">连接 H200 数据集，等待实时进度</p></div>
+        <div class="metrics">
+          <div class="metric"><span>成功录制</span><div><strong id="recorded">—</strong><small>/ <span id="target">2,500</span></small></div><div class="meter"><i id="total-meter"></i></div></div>
+          <div class="metric"><span>约束已写入</span><div><strong id="annotated">—</strong><small class="mint">条</small></div><p id="backlog">等待数据</p></div>
+          <div class="metric"><span>任务已完成</span><div><strong id="ready">—</strong><small>/ 50</small></div><p id="workers">— 个任务采集中</p></div>
+        </div>
+      </section>
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+      <section class="workspace">
+        <div class="workspace-heading"><div><div class="eyebrow">DEMONSTRATION EXPLORER</div><h2 id="task-title">选择一项任务</h2><p id="task-description" class="muted">加载后即可回放轨迹与查看约束。</p></div><span id="task-progress" class="pill">— / 50</span></div>
+        <div class="tabs" role="tablist"><button id="inspect-tab" class="active" role="tab" aria-selected="true">轨迹审阅</button><button id="compare-tab" role="tab" aria-selected="false">初始状态对比 <span id="compare-count">0</span></button><span id="updated" class="update-label">每 15 秒同步</span></div>
+        <div id="no-data" class="empty large" hidden><span class="empty-icon">◌</span><h3>这个任务还在排队</h3><p>成功轨迹生成后会自动出现。你可以先查看其他任务。</p></div>
+        <div id="inspect-content" class="inspect-grid">
+          <div class="review-main">
+            <div class="episode-toolbar"><div class="episode-switch"><button id="prev-episode" class="icon-button" aria-label="上一条轨迹">‹</button><label for="episode-select" class="sr-only">选择轨迹</label><select id="episode-select"></select><button id="next-episode" class="icon-button" aria-label="下一条轨迹">›</button></div><div id="episode-badges" class="episode-badges"></div><button id="native-video" class="text-button">原始视频 ↗</button></div>
+            <div id="instruction" class="instruction">正在读取真实轨迹…</div>
+            <section class="player" aria-label="多视角逐帧回放">
+              <div class="camera-grid">
+                <div class="camera main-camera"><div class="camera-label"><span class="camera-dot"></span><label for="camera-select" class="sr-only">主视角</label><select id="camera-select"><option value="head_camera">HEAD CAMERA</option><option value="front_camera">FRONT CAMERA</option></select></div><img id="main-image" alt="主视角记录画面"><div id="frame-loading" class="frame-loading">载入画面…</div><span id="frame-stamp" class="frame-stamp">FRAME —</span></div>
+                <div class="wrist-cameras"><div class="camera"><span class="camera-label left-label">LEFT WRIST</span><img id="left-image" alt="左腕相机记录画面"></div><div class="camera"><span class="camera-label right-label">RIGHT WRIST</span><img id="right-image" alt="右腕相机记录画面"></div></div>
+              </div>
+              <div class="transport"><button id="play" class="play-button" aria-label="播放轨迹">▶</button><button id="prev-frame" class="icon-button" aria-label="上一帧">‹</button><div class="scrubber"><div id="event-markers" class="event-markers"></div><input id="frame-slider" type="range" min="0" max="1" value="0" aria-label="轨迹帧"></div><button id="next-frame" class="icon-button" aria-label="下一帧">›</button><span id="frame-counter" class="mono frame-counter">0 / 0</span><select id="speed" aria-label="回放速度"><option value="5">5 帧/秒</option><option value="10" selected>10 帧/秒</option><option value="20">20 帧/秒</option></select></div>
+            </section>
+            <div class="plot-grid">
+              <section class="panel signal-panel"><div class="panel-header"><h3>动作轨迹</h3><div class="compact-controls"><select id="signal-kind" aria-label="曲线类型"><option value="position">末端位置 · m</option><option value="gripper">夹爪指令 · 0–1</option></select><select id="arm-select" aria-label="曲线机械臂"><option value="left">左臂</option><option value="right">右臂</option><option value="both">双臂</option></select></div></div><div id="signal-legend" class="legend"></div><div id="signal-chart" class="chart" aria-label="动作曲线"></div></section>
+              <section class="panel spatial-panel"><div class="panel-header"><h3>末端轨迹</h3><select id="projection" aria-label="空间投影"><option value="iso">空间投影</option><option value="xy">俯视 XY</option><option value="xz">侧视 XZ</option></select></div><div class="legend"><span><i class="left-color"></i>左臂</span><span><i class="right-color"></i>右臂</span><span class="muted">● 当前帧</span></div><div id="spatial-chart" class="chart" aria-label="末端空间轨迹"></div></section>
+            </div>
+            <section class="panel constraint-plot"><div class="panel-header"><div><h3>约束特征与允许区间</h3><p id="constraint-plot-label" class="muted">选择右侧约束查看</p></div><span id="constraint-unit" class="tag">—</span></div><div id="constraint-chart" class="chart" aria-label="约束特征曲线"></div><div class="plot-caption"><span><i class="band-key"></i>允许区间（仅在激活帧生效）</span><span><i class="line-key"></i>参考特征</span><span>点击曲线定位帧</span></div></section>
+          </div>
+          <aside class="inspector">
+            <section class="panel"><div class="panel-header"><h3>几何约束</h3><span id="constraint-count" class="count-badge">0</span></div><div id="annotation-method" class="method-note">等待标注</div><div id="constraint-list" class="constraint-list"></div><div id="constraint-detail" class="constraint-detail"></div></section>
+            <section class="panel event-panel"><div class="panel-header"><h3>参考事件</h3><span class="muted small">点击定位</span></div><div id="events" class="events"></div></section>
+            <section class="panel provenance-panel"><div class="panel-header"><h3>数据溯源</h3><button id="export" class="text-button">导出 JSON ↓</button></div><dl id="provenance"></dl><details><summary>初始物体位姿</summary><div id="initial-objects"></div></details><p class="prior-note">允许区间来自参考轨迹与显式容差先验；参考校验通过不等于物理可行范围已经验证。</p></section>
+          </aside>
+        </div>
+        <section id="compare-content" class="compare-content" hidden><div class="compare-heading"><div><h3>不同起点，同一任务</h3><p id="diversity-note" class="muted">每张图对应一条成功轨迹的第 0 帧。</p></div><span class="tag">INITIAL FRAME · 000</span></div><div id="compare-grid" class="compare-grid"></div><div class="pagination"><button id="compare-prev" class="secondary-button">← 上一页</button><span id="compare-page" class="muted mono"></span><button id="compare-next" class="secondary-button">下一页 →</button></div></section>
+      </section>
+      <footer class="page-footer"><span>RoboTwin × RAX <span class="muted">/</span> OpenWAM</span><span>成功轨迹 · 独立初始状态 · 可追溯约束</span></footer>
+    </main>
+  </div>
+  <dialog id="video-dialog"><div class="dialog-heading"><h3>原生录制视频</h3><button id="close-video" class="icon-button" aria-label="关闭视频">×</button></div><video id="video" controls playsinline></video><p class="muted">原生 MP4 回放；精确帧检查请使用主页面的轨迹滑块。</p></dialog>
+</body>
+</html>
