@@ -59,3 +59,33 @@ def test_missing_grasp_is_retryable_but_unrelated_programming_errors_are_not():
     with pytest.raises(TypeError):play_expert(native)
     native.play_once=lambda:native.get_grasp_pose() or 'native fallback succeeded'
     assert play_expert(native)=='native fallback succeeded'
+
+
+def test_empty_contact_set_is_rejected_only_if_native_fallback_does_not_recover():
+    from scripts.collect_robotwin_clean50 import play_expert,RejectedEpisode
+    class Native:
+        def choose_grasp_pose(self):return None,None
+        def play_once(self):
+            pose,_=self.choose_grasp_pose()
+            if pose is None:raise AssertionError('target_pose cannot be None for move action.')
+    native=Native();original=native.choose_grasp_pose
+    with pytest.raises(RejectedEpisode,match='native_grasp_pose_unavailable'):play_expert(native)
+    assert native.choose_grasp_pose==original
+    native.play_once=lambda:native.choose_grasp_pose() and 'native fallback succeeded'
+    assert play_expert(native)=='native fallback succeeded'
+
+
+def test_failed_plan_empty_grasp_actions_are_rejected_without_swallowing_index_errors():
+    from scripts.collect_robotwin_clean50 import play_expert,RejectedEpisode
+    class Native:
+        plan_success=False
+        def grasp_actor(self):return None,[]
+        def play_once(self):return self.grasp_actor()[1][0]
+    native=Native();original=native.grasp_actor
+    with pytest.raises(RejectedEpisode,match='native_plan_failed_before_grasp'):play_expert(native)
+    assert native.grasp_actor==original
+    native.plan_success=True
+    with pytest.raises(IndexError):play_expert(native)
+    native.play_once=lambda:[][0]
+    native.plan_success=False
+    with pytest.raises(IndexError):play_expert(native)

@@ -28,19 +28,35 @@ class RejectedEpisode(Exception):pass
 
 def play_expert(native):
     """Keep native fallback logic, but classify propagated infeasible grasp poses."""
-    original=native.get_grasp_pose;missing=False
-    def tracked(*args,**kwargs):
-        nonlocal missing
-        result=original(*args,**kwargs)
-        missing=missing or result is None
-        return result
-    native.get_grasp_pose=tracked
+    originals={};missing=False
+    def tracked(method,name):
+        def call(*args,**kwargs):
+            nonlocal missing
+            result=method(*args,**kwargs)
+            if name=='get_grasp_pose':missing=missing or result is None
+            elif name=='choose_grasp_pose':
+                # An actor with no usable contact points returns (None, None)
+                # without ever calling get_grasp_pose().
+                missing=missing or (isinstance(result,(tuple,list)) and any(p is None for p in result))
+            elif (not getattr(native,'plan_success',True) and isinstance(result,(tuple,list))
+                  and len(result)==2 and result[0] is None and isinstance(result[1],list) and not result[1]):
+                # Native grasp_actor returns this after a prior planning failure.
+                # Some experts then index the empty action list. The scene has
+                # already failed; advance its seed before that incidental error.
+                raise RejectedEpisode('native_plan_failed_before_grasp')
+            return result
+        return call
+    for name in ('get_grasp_pose','choose_grasp_pose','grasp_actor'):
+        if hasattr(native,name):
+            originals[name]=getattr(native,name)
+            setattr(native,name,tracked(originals[name],name))
     try:return native.play_once()
     except (TypeError,AssertionError) as exc:
         if missing and str(exc) in ("'NoneType' object is not subscriptable",'target_pose cannot be None for move action.'):
             raise RejectedEpisode('native_grasp_pose_unavailable: '+str(exc)) from exc
         raise
-    finally:native.get_grasp_pose=original
+    finally:
+        for name,method in originals.items():setattr(native,name,method)
 
 
 def inventory(output):
