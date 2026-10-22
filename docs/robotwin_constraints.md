@@ -181,3 +181,7 @@ and 0.02 opening fraction. They define reference envelopes, not measured physica
 tolerance or a verified grasp volume. The agent must explain their use and mark
 unsupported geometric claims proposed/unknown, which training ignores. Native
 expert success, annotation validity, and C2R policy success are different metrics.
+
+The [2026-10-22 pilot](robotwin_pilot_20261022.md) records native expert collection,
+local annotation, an OpenWAM loss/backward audit, and five randomized controller
+attempts, with infrastructure errors reported separately.
