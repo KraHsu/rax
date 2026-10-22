@@ -25,6 +25,23 @@ from scripts.collect_robotwin_expert import publish_scene_info
 class RejectedEpisode(Exception):pass
 
 
+def play_expert(native):
+    """Keep native fallback logic, but classify propagated infeasible grasp poses."""
+    original=native.get_grasp_pose;missing=False
+    def tracked(*args,**kwargs):
+        nonlocal missing
+        result=original(*args,**kwargs)
+        missing=missing or result is None
+        return result
+    native.get_grasp_pose=tracked
+    try:return native.play_once()
+    except (TypeError,AssertionError) as exc:
+        if missing and str(exc) in ("'NoneType' object is not subscriptable",'target_pose cannot be None for move action.'):
+            raise RejectedEpisode('native_grasp_pose_unavailable: '+str(exc)) from exc
+        raise
+    finally:native.get_grasp_pose=original
+
+
 def inventory(output):
     import h5py
     entries={}
@@ -56,7 +73,7 @@ def record(native,task,seed,index,stage,output,used_scenes,revision,cache_stats)
         initial=initial_scene(native);fingerprint=scene_fingerprint(initial)
         atomic_json(stage/'initial_scene.json',initial)
         if fingerprint in used_scenes:raise RejectedEpisode('duplicate_initial_geometry')
-        info=native.play_once()
+        info=play_expert(native)
         if not native.plan_success or not native.check_success():raise RejectedEpisode('expert_plan_failed')
         native.save_traj_data(index)
         random.seed(seed)
@@ -72,7 +89,7 @@ def record(native,task,seed,index,stage,output,used_scenes,revision,cache_stats)
         if scene_fingerprint(replay_initial)!=fingerprint:raise RejectedEpisode('plan_replay_initial_state_mismatch')
         native.set_instruction(instruction)
         native.set_path_lst(dict(args,**native.load_tran_data(index)))
-        info=native.play_once()
+        info=play_expert(native)
         if not native.plan_success or not native.check_success():raise RejectedEpisode('recording_replay_failed')
     finally:native.close_env()
     replayed=time.time()

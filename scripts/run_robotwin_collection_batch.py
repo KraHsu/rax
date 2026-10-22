@@ -13,6 +13,20 @@ from services.robotwin.collection import atomic_json
 from services.robotwin.catalog import source_root
 
 
+class AdoptedCollector:
+    """Preserve running collectors when only their queue supervisor restarts."""
+    def __init__(self,pid,task,output):self.pid=pid;self.task=task;self.output=output
+    def poll(self):
+        command=Path(f'/proc/{self.pid}/cmdline')
+        try:args=command.read_bytes().split(b'\0')
+        except FileNotFoundError:args=[]
+        if (any(a.endswith(b'/collect_robotwin_clean50.py') for a in args)
+            and self.task.encode() in args and str(self.output).encode() in args):return None
+        path=self.output/'collection_status.json'
+        state=json.loads(path.read_text()) if path.exists() else {}
+        return 0 if state.get('status')=='recorded' else 1
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,required=True);p.add_argument('--gpus',type=int,nargs='+',default=list(range(8)))
@@ -31,13 +45,26 @@ def main():
     if args.tasks:
         if set(args.tasks)-set(tasks):raise ValueError('Unknown native task')
         tasks=args.tasks
+    manifest_path=root/'batch_manifest.json'
+    previous=json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    if previous and (previous['tasks']!=tasks or previous['per_task']!=args.episodes):
+        raise ValueError('Resume must preserve task set and per-task target')
     pending=[];done=[];failed={};running={};pilot_passed=not args.pilot_first;pilot_task=None
+    retries=previous.get('failure_retries',{})
+    for gpu,item in previous.get('running',{}).items():
+        gpu=int(gpu);task=item['task'];out=root/task/'aloha-agilex_clean_50'
+        child=AdoptedCollector(item['pid'],task,out)
+        if child.poll() is None:
+            if gpu not in args.gpus:raise ValueError('Cannot drop a GPU with an active collector')
+            running[gpu]=(task,child)
+    if running and previous.get('pilot_passed'):pilot_passed=True
     for task in tasks:
+        if any(task==t for t,_ in running.values()):continue
         status=root/task/'aloha-agilex_clean_50/collection_status.json'
         if status.exists() and json.loads(status.read_text()).get('status')=='recorded':done.append(task)
         else:pending.append(task)
     manifest={'tasks':tasks,'per_task':args.episodes,'total_target':len(tasks)*args.episodes,'collection':'clean',
-              'gpus':args.gpus,'started_unix':time.time(),'status':'running'}
+              'gpus':args.gpus,'started_unix':previous.get('started_unix',time.time()),'status':'running'}
     atomic_json(root/'batch_manifest.json',manifest)
     while pending or running:
         if pilot_task and not pilot_passed:
@@ -65,9 +92,17 @@ def main():
             code=child.poll()
             if code is None:continue
             if code==0:done.append(task)
-            else:failed[task]=code
+            else:
+                state=json.loads((root/task/'aloha-agilex_clean_50/collection_status.json').read_text())
+                # Older live collectors predate the missing-grasp classifier.
+                known=state.get('error') in ("TypeError: 'NoneType' object is not subscriptable",
+                                             'AssertionError: target_pose cannot be None for move action.')
+                if known and retries.get(task,0)<2:
+                    retries[task]=retries.get(task,0)+1;pending.insert(0,task)
+                else:failed[task]=code
             del running[gpu]
         manifest.update(updated_unix=time.time(),pilot_passed=pilot_passed,recorded_tasks=done,failed_tasks=failed,pending_tasks=pending,
+                        failure_retries=retries,
                         running={str(g):{'task':t,'pid':p.pid} for g,(t,p) in running.items()})
         atomic_json(root/'batch_manifest.json',manifest)
         time.sleep(5)

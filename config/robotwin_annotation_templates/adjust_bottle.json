@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "task": "adjust_bottle",
+  "rationale": "Translated from the first two RAX reviewed clean episodes; reuse four common reference features. Orientation-specific late intervals are intentionally not inferred from task name.",
+  "signatures": [
+    [
+      "close"
+    ]
+  ],
+  "rules": [
+    {
+      "id": "closure_location",
+      "type": "point_distance_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "first"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference EEF position at closure; not an object grasp boundary."
+    },
+    {
+      "id": "closed_command",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "closed",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference closed command fraction after closure; not measured force or grip stability."
+    },
+    {
+      "id": "closure_to_terminal_z",
+      "type": "axis_displacement_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      },
+      "rationale": "Reference vertical EEF displacement from closure to the endpoint; not measured object lift.",
+      "start_anchor": "first_close"
+    },
+    {
+      "id": "terminal_height",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      },
+      "rationale": "Reference terminal EEF height, leaving horizontal endpoint coordinates unconstrained."
+    }
+  ]
+}

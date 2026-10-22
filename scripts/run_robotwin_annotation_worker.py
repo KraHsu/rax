@@ -30,8 +30,11 @@ def main():
         completed=subprocess.run([*ssh,args.host,shlex.join(command)],text=True,capture_output=True,timeout=300,check=True)
         return json.loads(completed.stdout)
     command=[args.remote_python,args.remote_project+'/scripts/robotwin_annotation_queue.py']
-    status={'worker':args.worker,'completed':0,'failed':0,'status':'starting'}
+    previous=json.loads((root/'status.json').read_text()) if (root/'status.json').exists() else {}
+    status={'worker':args.worker,'completed':previous.get('completed',0),'failed':previous.get('failed',0),'status':'starting'}
     while True:
+        if (root/'stop_after_current').exists():
+            status.update(status='stopped',updated_unix=time.time());atomic_json(root/'status.json',status);return
         job=None
         try:
             job=remote([*command,'claim','--root',args.dataset,'--worker',args.worker])
@@ -43,14 +46,19 @@ def main():
             local=root/job['task']/f'episode{job["index"]}-{job["claim_id"]}';local.mkdir(parents=True)
             review=local/'review'
             subprocess.run(['rsync','-az','-e',shlex.join(ssh),args.host+':'+job['review']+'/',str(review)+'/'],check=True,timeout=300)
+            status.pop('queue',None)
             status.update(status='annotating',job=job,updated_unix=time.time());atomic_json(root/'status.json',status)
             with (local/'agent.log').open('w') as log:
                 subprocess.run([sys.executable,str(PROJECT/'scripts/run_robotwin_annotation.py'),'--review',str(review),
-                                '--output',str(local/'agent'),'--timeout','1800'],stdout=log,stderr=subprocess.STDOUT,check=True)
+                                '--output',str(local/'agent'),'--timeout','1800','--task-template'],stdout=log,stderr=subprocess.STDOUT,check=True)
             proposal=local/'agent/agent-workspace/annotations.json';remote_proposal=job['review']+'/annotations.json'
             subprocess.run(['rsync','-az','-e',shlex.join(ssh),str(proposal),args.host+':'+remote_proposal],check=True,timeout=300)
+            template=local/'agent/agent-workspace/task_template.json'
+            report=local/'agent/agent-workspace/REPORT.md'
+            subprocess.run(['rsync','-az','-e',shlex.join(ssh),str(template),str(report),args.host+':'+job['review']+'/'],check=True,timeout=300)
             result=remote([*command,'complete','--receipt',job['receipt'],'--claim-id',job['claim_id'],
-                           '--proposal',remote_proposal,'--agent-run',str(local/'agent')])
+                           '--proposal',remote_proposal,'--agent-run',job['review'],
+                           '--template',job['review']+'/task_template.json'])
             atomic_json(local/'publication.json',result);status['completed']+=1
             print(json.dumps({'event':'published','job':job,**result}),flush=True)
         except Exception as exc:

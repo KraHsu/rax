@@ -67,6 +67,7 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--login-home', type=Path, default=Path.home()/'.codex')
     p.add_argument('--timeout', type=int, default=1800, help='Maximum seconds per offline annotation')
+    p.add_argument('--task-template', action='store_true', help='Also review a reusable numeric task template')
     args = p.parse_args()
     source = args.review.resolve()
     review = json.loads((source/'review.json').read_text())
@@ -76,7 +77,32 @@ def main():
     shutil.copytree(source, workspace/'input')
     skill = workspace/'.agents/skills/geometric-constraints'
     shutil.copytree(PROJECT/'agent_skills/control/robotwin/geometric-constraints', skill)
-    (workspace/'AGENTS.md').write_text(INSTRUCTIONS)
+    instructions = INSTRUCTIONS
+    if args.task_template:
+        instructions += '''\nAlso create a reusable task_template.json. Read
+.agents/skills/geometric-constraints/references/programmatic-template.md.
+Select task-relevant features once; all numeric values will be recomputed for
+each episode. Copy the observed event_signature into signatures; do not expand
+coverage beyond the observed pattern. Run ./validate_task_template.py
+task_template.json and inspect its audit. You must provide both the per-episode
+annotations.json/REPORT.md and the reusable template. Explain any omitted
+features that the selector language cannot safely express. The three-seed gate
+on the data host checks numerical validity, not physical feasibility.\n'''
+        from services.robotwin.programmatic_annotation import instantiate_review
+        for relative in ('services/__init__.py','services/robotwin/__init__.py'):
+            path=workspace/'template_runtime'/relative; path.parent.mkdir(parents=True,exist_ok=True);path.write_text('')
+        for name in ('annotation.py','constraint_schema.py','programmatic_annotation.py'):
+            shutil.copy2(PROJECT/'services/robotwin'/name,workspace/'template_runtime/services/robotwin'/name)
+        helper=workspace/'validate_task_template.py'
+        helper.write_text('#!'+sys.executable+'\n'+'''import json,sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent/'template_runtime'))
+from services.robotwin.programmatic_annotation import instantiate_review
+c,a=instantiate_review('input',json.loads(Path(sys.argv[1]).read_text()))
+print(json.dumps({'constraints':c,'audit':a},indent=2))
+''')
+        helper.chmod(0o700)
+    (workspace/'AGENTS.md').write_text(instructions)
     (workspace/'TASK.md').write_text('# Demonstration\n\n'+review['instruction']+'\n')
     auth = (args.login_home.expanduser()/'auth.json').resolve(); chatgpt_login(auth)
     local = tomllib.loads((args.login_home.expanduser()/'config.toml').read_text())
@@ -113,6 +139,12 @@ def main():
         validate_bundle(bundle, review['frame_count'])
         if not (workspace/'REPORT.md').is_file():
             raise ValueError('Agent did not write its annotation report')
+        if args.task_template:
+            template=json.loads((workspace/'task_template.json').read_text())
+            generated,audit=instantiate_review(source,template)
+            if template['signatures'] != [review['event_signature']]:
+                raise ValueError('New task template must use only its observed signature')
+            (root/'template_audit.json').write_text(json.dumps(audit,indent=2))
         metadata.update(status='proposed', constraints=len(proposal['constraints']),
                         note='Physical/reference checks run on the data host before embedding')
     except BaseException as exc:

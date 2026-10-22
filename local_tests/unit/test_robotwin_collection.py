@@ -44,3 +44,18 @@ def test_queue_cannot_publish_an_episode_without_accepted_constraints(tmp_path):
     assert not (tmp_path/'data').exists()
     with pytest.raises(ValueError,match='Stale'):
         complete(receipt,'wrong',{},'agent-run')
+
+
+def test_missing_grasp_is_retryable_but_unrelated_programming_errors_are_not():
+    from scripts.collect_robotwin_clean50 import play_expert,RejectedEpisode
+    class Native:
+        def get_grasp_pose(self):return None
+        def play_once(self):return self.get_grasp_pose()[:3]
+    native=Native();original=native.get_grasp_pose
+    with pytest.raises(RejectedEpisode,match='native_grasp_pose_unavailable'):play_expert(native)
+    assert native.get_grasp_pose==original
+    missing=None
+    native.play_once=lambda:missing[0]
+    with pytest.raises(TypeError):play_expert(native)
+    native.play_once=lambda:native.get_grasp_pose() or 'native fallback succeeded'
+    assert play_expert(native)=='native fallback succeeded'

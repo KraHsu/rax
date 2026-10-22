@@ -8,7 +8,7 @@
 2. 用同一 seed 重建场景，检查初始场景指纹一致，使用原生回放、录制和 HDF5 合并函数。
 3. 再次检查原生任务成功。失败、初始状态重复和回放失配均不占 50 条名额，改用新的 seed。
 4. 成功轨迹先存入 `raw/`，附带动作格式、seed、初始场景位姿、场景指纹及待标注约束容器。
-5. 本机两个 RAX/Codex worker 读取小型审核包，为每条轨迹独立填写几何约束。
+5. 本机两个 RAX/Codex worker 审核任务与新事件模式并产出模板。H200 对模板覆盖的轨迹独立计算几何约束；未覆盖情况交回 RAX。详见 [程序化标注](robotwin_programmatic_annotation.md)。
 6. H200 校验标注来源哈希、约束 schema、参考事件和参考轨迹是否落在允许集合内。至少有一条 accepted 约束后才发布到 `data/`。约束及修订历史嵌入该 HDF5。
 
 同一任务内同时检查 seed 和**真实初始几何**不重复。场景指纹不包含 seed 或时间戳；物体位置按 1 mm 量化，四元数及非机器人关节位置按 1e-3 量化。四元数正负号统一。机器人本体不参与任务关节去重。完整未量化初始场景保存在 HDF5 的 `initial_scene/json`。
@@ -58,6 +58,8 @@ export ROBOTWIN_PATH=/mnt/data/liangjiaqi/RoboTwin
 
 本机标注 worker 的日志、任务输入、模型报告和发布收据在
 `runtime/clean50_annotation/w0/` 与 `w1/`。本机运行时使用已配置的 Codex 登录及代理；凭据不复制到 H200。单次标注超时 30 分钟，单条最多尝试 3 次，失败记录保留在队列中。
+
+另有 H200 常驻 `run_robotwin_programmatic_annotation.py` 消费已激活模板，按轨迹重新计算参数并写入同一 HDF5。首次 RAX 审核耗时与纯程序化发布耗时分别统计。
 
 ## 启动时已验证
 

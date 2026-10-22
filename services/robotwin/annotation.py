@@ -125,6 +125,13 @@ def export_review(episode, output):
                         'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02,
                         'meaning': 'Operator defaults for reference envelopes, not experimentally verified physical tolerance. '
                                    'Do not infer grasp/contact/support boundaries; mark unsupported geometry proposed or unknown.'}}
+        if 'robotwin_expert_provenance' in h.attrs:
+            from services.robotwin.programmatic_annotation import trajectory_data
+            _, arms, signature = trajectory_data(h)
+            metadata['expert_provenance'] = json.loads(h.attrs['robotwin_expert_provenance'])
+            metadata['task'] = metadata['expert_provenance']['task']
+            metadata['event_signature'] = signature
+            metadata['active_arms'] = [arm for arm, data in arms.items() if data['active']]
         (output/'review.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
     return metadata
 

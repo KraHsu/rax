@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "task": "beat_block_hammer",
+  "rationale": "Translated from the first RAX reviewed clean episode. Reuse closure, command state, and final EEF point; omit its manually chosen pre-stroke displacement anchor.",
+  "signatures": [
+    [
+      "close"
+    ]
+  ],
+  "rules": [
+    {
+      "id": "closure_location",
+      "type": "point_distance_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "first"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference EEF position at closure; not an object grasp boundary."
+    },
+    {
+      "id": "closed_command",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "closed",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference closed command fraction after closure; not measured force or grip stability."
+    },
+    {
+      "id": "terminal_location",
+      "type": "point_distance_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference final EEF location beside the block, not hammer-head contact or impact force."
+    }
+  ]
+}

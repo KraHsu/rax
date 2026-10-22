@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "task": "click_alarmclock",
+  "rationale": "Translated from the first RAX reviewed clean episode. Keep closed command, minimum post-closure height and final height. Do not constrain its free-space closure location or infer the button axis.",
+  "signatures": [
+    [
+      "close"
+    ]
+  ],
+  "rules": [
+    {
+      "id": "closed_command",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "closed",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Reference closed command fraction after closure; not measured force or grip stability."
+    },
+    {
+      "id": "lowest_after_closure",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "position_extremum",
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "which": "min",
+        "after": "last_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      },
+      "rationale": "Measured lowest EEF height after closure during the press demonstration; no button surface or contact inference."
+    },
+    {
+      "id": "terminal_height",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      },
+      "rationale": "Reference terminal EEF height, leaving horizontal endpoint coordinates unconstrained."
+    }
+  ]
+}
