@@ -54,6 +54,8 @@ def initialize_runtime():
     torch.zeros(1, device='cuda')
     # cuRobo must establish its CUDA context before SAPIEN scene creation.
     importlib.import_module('curobo.wrap.reacher.motion_gen')
+    from services.robotwin.native_compat import install
+    install(root, importlib.import_module('envs.reward'))
 
 
 def make_environment(task, collection, entry, *, episode_index):

@@ -75,3 +75,18 @@ seed 1: [-0.1187832, -0.0961892, 0.7737829] m
 2026-10-22 启动后的审核快照：8 个任务均已产出成功轨迹，总计 39 条；各任务已录制数与唯一 seed、唯一初始场景数一致。`adjust_bottle` 的前两条已由两个本机 RAX worker 完成标注并发布到 `data/`，首条包含 4 项 accepted 约束。该快照不代表整批采集完成；实时数量以状态脚本为准。
 
 采集、标注、约束 schema 和容差相关的 33 项单元测试通过。
+
+## 原生任务接口兼容
+
+运行时为未设置 `ASSETS_PATH` 的环境补上 RoboTwin 根目录（包含 `assets/` 的目录），
+保留显式指定的路径。`place_a2b_left/right` 通过该变量枚举模型变体。
+
+部分原生代码混用了奖励接口：`place_fan` 调用
+`Reward(subtasks=..., transition_rewards=...)`，当前奖励模块仅提供工厂。
+`services/robotwin/native_compat.py` 将这一调用转换为原生
+`Reward.build_top({'type':'Serial', ...})`，保留子任务、过渡奖励和归一化；
+已有构造函数的版本不改写。专家动作、采样和 `check_success()` 不受影响。
+新采集的 provenance 会记录 `runtime_compatibility`。
+
+修复后需将已经退出的任务重新排队。批量调度器重启时会接管仍存活的采集进程，
+重新排入未满额任务；只重启该调度器，不能终止其采集子进程或覆盖运行中的 manifest。

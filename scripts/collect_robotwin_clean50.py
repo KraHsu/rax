@@ -19,6 +19,7 @@ import time
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from services.robotwin.collection import atomic_json, initial_scene, scene_fingerprint, install_planner_cache
 from services.robotwin.runtime import initialize_runtime,native_config,source_commit
+from services.robotwin.native_compat import compatibility_report
 from scripts.collect_robotwin_expert import publish_scene_info
 
 
@@ -98,6 +99,7 @@ def record(native,task,seed,index,stage,output,used_scenes,revision,cache_stats)
     meta={'task':task,'seed':seed,'index':index,'collection':0,'task_config':'demo_clean',
           'source_commit':revision,'native_success':True,'initial_scene_sha256':fingerprint,
           'recording_method':'native_plan_replay_merge_pkl_to_hdf5_video','save_freq':args['save_freq'],
+          'runtime_compatibility':compatibility_report(),
           'planner_cache':dict(cache_stats),'seconds':{'plan':planned-started,'replay':replayed-planned,'merge':time.time()-replayed}}
     bundle={'schema_version':'1.0','action_contract':{'position':'absolute','rotation':'absolute',
             'quaternion_order':'wxyz','gripper':'absolute_open_fraction','frame':'world'},
