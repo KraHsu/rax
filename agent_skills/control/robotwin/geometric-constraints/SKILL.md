@@ -62,6 +62,13 @@ and quaternion WXYZ. Its axes are converted to world directions. A moving object
 frame cannot be supplied unless the data adapter provides its actual trajectory;
 this version does not infer it from robot actions.
 
+Schema 1.2 displacement parameters may specify `anchor: reference_frame`:
+use the fixed frame origin for axial displacement, or its WXYZ orientation for
+angular displacement. The default `predicted_start` needs activation.start
+inside the chunk. Publication converts spans over 32 actions to a measured fixed
+reference anchor and archives that change; these labels do not constrain motion
+relative to an unobserved predicted starting pose. Bounds/events are preserved.
+
 `penalty.scale` uses the same units as the scalar. `squared_hinge` is the default;
 `quartic_hinge` gives faster growth outside the interval. Both are zero inside.
 Weights combine constraints, not per-frame imitation targets. Axis-angle bounds

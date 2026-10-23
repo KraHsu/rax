@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from services.robotwin.annotation import digest, reference_values, validate_reference_bounds
-from services.robotwin.constraint_schema import read_embedded, validate_bundle
+from services.robotwin.constraint_schema import SCHEMA_VERSION, read_embedded, validate_bundle
 from services.robotwin.constraint_coverage import coverage_report, coverage_masks, chunk_candidate
 from services.robotwin.full_trajectory import complete_constraints, PREFIX
 from services.dataset_viewer.store import feature_curve
@@ -19,7 +19,7 @@ def generated(path):
     with h5py.File(path, 'r') as h:
         b = read_embedded(h)
         cs, report = complete_constraints(h, b['constraints'], b['provenance']['recording_id'])
-        b.update(constraints=cs, schema_version='1.1')
+        b.update(constraints=cs, schema_version=SCHEMA_VERSION)
         validate_bundle(b, len(h['endpose/left_endpose'])); validate_reference_bounds(b, h)
         return cs, report
 
@@ -72,7 +72,7 @@ def test_backfill_preserves_actions_and_is_repeatable(tmp_path):
     with h5py.File(path) as h: before = {k:h['endpose/'+k][:] for k in h['endpose']}
     result = upgrade(path); assert result['coverage']['complete']
     with h5py.File(path) as h:
-        assert read_embedded(h)['schema_version']=='1.1'
+        assert read_embedded(h)['schema_version']==SCHEMA_VERSION
         for k,v in before.items(): np.testing.assert_array_equal(h['endpose/'+k][:],v)
         assert json.loads(h['trajectory_constraints/coverage'][()])['complete']
     checksum = digest(path)
@@ -85,3 +85,22 @@ def test_new_primitive_is_versioned_and_shared_with_training():
     if other.exists():
         for name in ('constraint_schema.py','constraint_coverage.py'):
             assert (root/'services/robotwin'/name).read_bytes()==(other/name).read_bytes()
+
+
+@pytest.mark.parametrize('kind', ['axis_displacement_interval', 'angular_displacement_interval'])
+def test_long_anchor_becomes_explicit_reference_geometry_without_changing_bounds(tmp_path, kind):
+    path = episode(tmp_path/'ep.hdf5', seed=40)
+    with h5py.File(path) as h:
+        from test_robotwin_programmatic_annotation import rule
+        t = template()
+        r = rule('long', kind, {'kind': 'terminal'}, start_anchor='episode_start')
+        if kind == 'axis_displacement_interval':
+            r['parameters'] = {'axis': [0., 0., 1.]}
+        t['rules'] = [r]
+        cs, _ = instantiate(h, t)
+        c = next(c for c in cs if not c['id'].startswith(PREFIX))
+        assert c['parameters']['anchor'] == 'reference_frame'
+        assert chunk_candidate(c, 46, 1)
+        assert np.all(reference_values(h, c) >= c['parameters']['bounds'][0])
+        np.testing.assert_allclose(feature_curve(h, c)[-1:], reference_values(h, c))
+        assert complete_constraints(h, cs, 'ref40')[0] == cs

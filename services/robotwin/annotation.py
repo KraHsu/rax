@@ -59,10 +59,12 @@ def reference_values(handle, constraint):
         target = basis @ np.asarray(p['reference_axis'])
         return np.arctan2(np.linalg.norm(np.cross(axis, target), axis=-1), (axis*target).sum(-1))
     if kind == 'angular_displacement_interval':
-        r = rotation(pose[a['start'], 3:]).T @ rotation(pose[indices, 3:])
+        origin = basis if p.get('anchor') == 'reference_frame' else rotation(pose[a['start'], 3:])
+        r = origin.T @ rotation(pose[indices, 3:])
         skew = np.stack((r[:, 2, 1]-r[:, 1, 2], r[:, 0, 2]-r[:, 2, 0], r[:, 1, 0]-r[:, 0, 1]), -1)
         return np.arctan2(np.linalg.norm(skew, axis=-1)*.5, (np.trace(r, axis1=-2, axis2=-1)-1)*.5)
-    origin = pose[a['start'], :3] if kind == 'axis_displacement_interval' else np.asarray(frame['origin_m'])
+    origin = (pose[a['start'], :3] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
+              else np.asarray(frame['origin_m']))
     delta = pose[indices, :3]-origin
     if kind == 'point_distance_interval':
         return np.linalg.norm(delta, axis=-1)

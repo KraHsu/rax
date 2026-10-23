@@ -76,8 +76,14 @@ Displacement rules add `start_anchor`:
 Point/event displacement rules require an explicit earlier anchor (not
 `selection`); a zero-length displacement is rejected. Non-default
 anchors work only with point/event selectors, never a gripper interval. The
-original start anchor must be present in a training chunk; the loss masks it
-otherwise. Include a justified local endpoint feature when appropriate.
+default predicted-start anchor must be present in a training chunk. Publication
+policy v2 converts spans over 32 actions to an explicit fixed reference anchor
+(`parameters.anchor=reference_frame`, schema 1.2), storing the measured start
+position/orientation in `reference_frame`. This keeps long-span endpoint labels
+usable in a 32-action chunk. Bounds and events remain unchanged; the label now
+measures relative to a fixed demonstrated pose, not an unobserved predicted pose.
+The publication history/rationale records this distinction. Do not add `anchor`
+to template parameters: the executor sets it from each measured trajectory.
 
 The executor measures min/max over exactly the selected activation, then applies
 the established operator priors: position ±0.005 m, angle ±0.0872664626 rad,

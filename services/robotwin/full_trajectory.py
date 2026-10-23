@@ -12,7 +12,8 @@ import numpy as np
 from services.robotwin.constraint_coverage import coverage_masks, coverage_report, runs
 
 PREFIX = '__full_motion_v1__'
-POLICY = {'version': 1, 'half_angle_rad': math.radians(60), 'turn_margin_rad': math.radians(5),
+POLICY = {'version': 2, 'half_angle_rad': math.radians(60), 'turn_margin_rad': math.radians(5),
+          'maximum_predicted_anchor_span': 32,
           'stationary_step_m': 1e-5, 'direction_slack_m': 1e-4, 'hold_margin_m': .02}
 
 
@@ -20,6 +21,26 @@ def complete_constraints(handle, constraints, recording_id):
     result = [copy.deepcopy(c) for c in constraints if not c['id'].startswith(PREFIX)]
     length = len(handle['endpose/left_endpose'])
     if length < 2: raise ValueError('Full motion coverage needs at least two frames')
+    for c in result:
+        if c['type'] not in ('axis_displacement_interval', 'angular_displacement_interval'):
+            continue
+        a = c['activation']
+        span = a.get('event', {}).get('frame', a['end']-1)-a['start']
+        if (span <= POLICY['maximum_predicted_anchor_span'] or c['parameters'].get('anchor') == 'reference_frame'
+                or c['evidence']['status'] != 'accepted'):
+            continue
+        arm = c['subject'].split('_')[0]
+        pose = np.asarray(handle[f'endpose/{arm}_endpose'][a['start']], dtype=float)
+        c['parameters']['anchor'] = 'reference_frame'
+        if c['type'] == 'axis_displacement_interval':
+            c['reference_frame']['origin_m'] = pose[:3].tolist()
+        else:
+            c['reference_frame']['quaternion_wxyz'] = (pose[3:]/np.linalg.norm(pose[3:])).tolist()
+        c['evidence']['rationale'] += (
+            ' Chunk-local anchor revision: this label now uses the fixed REFERENCE pose at frame '
+            f'{a["start"]}, stored in reference_frame, because its {span}-step span exceeds the 32-action chunk. '
+            'This overrides the preceding predicted-start masking rule: it constrains displacement from that '
+            'measured reference pose, not from an unobserved generated pose. Bounds and evaluation event are unchanged.')
     masks = coverage_masks(result, length)
     for arm in ('left', 'right'):
         positions = np.asarray(handle[f'endpose/{arm}_endpose'], dtype=float)[:, :3]

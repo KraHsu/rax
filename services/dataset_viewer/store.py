@@ -36,10 +36,12 @@ def feature_curve(handle, constraint):
         axes = rotation(pose[:, 3:]) @ np.asarray(p['local_axis']); target = basis @ np.asarray(p['reference_axis'])
         return np.arctan2(np.linalg.norm(np.cross(axes, target), axis=-1), (axes*target).sum(-1))
     if kind == 'angular_displacement_interval':
-        r = rotation(pose[c['activation']['start'], 3:]).T @ rotation(pose[:, 3:])
+        anchor = basis if p.get('anchor') == 'reference_frame' else rotation(pose[c['activation']['start'], 3:])
+        r = anchor.T @ rotation(pose[:, 3:])
         skew = np.stack((r[:,2,1]-r[:,1,2], r[:,0,2]-r[:,2,0], r[:,1,0]-r[:,0,1]), -1)
         return np.arctan2(np.linalg.norm(skew, axis=-1)*.5, (np.trace(r, axis1=-2, axis2=-1)-1)*.5)
-    origin = pose[c['activation']['start'], :3] if kind == 'axis_displacement_interval' else np.asarray(frame['origin_m'])
+    origin = (pose[c['activation']['start'], :3] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
+              else np.asarray(frame['origin_m']))
     delta = pose[:, :3]-origin
     if kind == 'point_distance_interval': return np.linalg.norm(delta, axis=-1)
     axis = basis @ np.asarray(p['axis']); projected = delta @ axis

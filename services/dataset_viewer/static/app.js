@@ -43,7 +43,7 @@ function activeFeature(c,values) {
   const frames=new Set(c.active_frames);return values.map((v,f)=>frames.has(f)?v:null);
 }
 function worldAxis(c){return unit3(rotate3(c.reference_frame.quaternion_wxyz,c.parameters.axis||c.parameters.reference_axis));}
-function constraintOrigin(c,d){return c.type==='axis_displacement_interval'?d.arms[constraintArm(c)].pose[c.activation.start].slice(0,3):c.reference_frame.origin_m;}
+function constraintOrigin(c,d){return c.type==='axis_displacement_interval'&&c.parameters.anchor!=='reference_frame'?d.arms[constraintArm(c)].pose[c.activation.start].slice(0,3):c.reference_frame.origin_m;}
 function positionBands(c,d) {
   if(!c)return {bands:[],note:''};
   const origin=constraintOrigin(c,d),[lo,hi]=c.parameters.bounds;
@@ -109,7 +109,7 @@ function spatialGeometry(c,d,f) {
     geometry.note=`夹爪指定轴与参考轴的允许夹角 ${fmt(lo*180/Math.PI,1)}–${fmt(hi*180/Math.PI,1)}°；箭头长度仅用于示意，绕轴旋转自由。`;
   }else if(c.type==='angular_displacement_interval'){
     for(const axis of [[1,0,0],[0,1,0],[0,0,1]]){
-      arrow(p,add3(p,mul3(rotate3(poses[c.activation.start].slice(3),axis),.05)),'anchor');
+      arrow(p,add3(p,mul3(rotate3(c.parameters.anchor==='reference_frame'?c.reference_frame.quaternion_wxyz:poses[c.activation.start].slice(3),axis),.05)),'anchor');
       arrow(p,add3(p,mul3(rotate3(poses[f].slice(3),axis),.05)),'actual');
     }
     geometry.note=`虚线为原始 F${c.activation.start} 朝向，实线为当前朝向。允许旋转角 ${fmt(lo*180/Math.PI,1)}–${fmt(hi*180/Math.PI,1)}° 由下方角位移曲线精确表示，不等同于分别约束三根轴。`;
