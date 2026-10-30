@@ -102,6 +102,11 @@ def validate_design(root, design, task):
         raise ValueError('All audited external sources must be frozen')
     # Imports the wrapper class only; never creates a Scene/renderer/PhysX world.
     import sapien
+    expected = design['runtime_numeric_context']
+    if (sapien.__version__ != expected['sapien_version'] or np.__version__ != expected['numpy_version']
+            or str(Path(sapien.pysapien.__file__).resolve()) != expected['backend_module']
+            or file_hash(sapien.pysapien.__file__) != expected['backend_sha256']):
+        raise ValueError('Native SAPIEN/backend/NumPy runtime differs from the CPU-verified context')
     scope = source_scope(paths, observed_timestep_setters=timestep_setter_codes(sapien.Scene))
     if not scope['passed']:
         raise ValueError('Unresolved step alias or timestep mutation in frozen scope: '+json.dumps(scope['findings']))
