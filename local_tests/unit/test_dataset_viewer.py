@@ -15,7 +15,7 @@ import pytest
 from services.dataset_viewer.server import Handler
 from services.dataset_viewer.store import Dataset, feature_curve
 from services.robotwin.annotation import reference_values
-from services.robotwin.constraint_schema import HDF5_KEY, KINDS
+from services.robotwin.constraint_schema import HDF5_KEY, KINDS, SCHEMA_VERSION
 from services.robotwin.collection import atomic_json
 from test_robotwin_programmatic_annotation import episode, template
 from services.robotwin.programmatic_annotation import instantiate
@@ -36,7 +36,7 @@ def dataset(tmp_path):
             h.attrs['instruction'] = 'Adjust the bottle.'
             h.create_dataset('initial_scene/json', data=json.dumps({'actors': [{'name': 'bottle', 'pose': [index*.1, 0, .8, 1, 0, 0, 0]}]}))
             if variant == 'data':
-                bundle = json.loads(h[HDF5_KEY][()]); bundle['constraints'], _ = instantiate(h, template()); bundle['schema_version'] = '1.1'
+                bundle = json.loads(h[HDF5_KEY][()]); bundle['constraints'], _ = instantiate(h, template()); bundle['schema_version'] = SCHEMA_VERSION
                 h[HDF5_KEY][()] = json.dumps(bundle)
                 h['trajectory_constraints/history'][()] = json.dumps([{'agent_run': 'template:fixture'}])
             # Native writer's JPEG has swapped red/blue channels; viewer restores RGB.
@@ -67,7 +67,7 @@ def test_live_publication_and_distinct_scenes(dataset):
     assert dataset.episode('adjust_bottle', 1)['annotated']
 
 
-@pytest.mark.parametrize('kind', [k for k in KINDS if k != 'motion_direction_cone'])
+@pytest.mark.parametrize('kind', [k for k in KINDS if k not in ('motion_direction_cone', 'window_direction_cone')])
 @pytest.mark.parametrize('mode', ['interval', 'endpoint', 'reference_event'])
 def test_all_frame_curves_match_training_feature_with_original_anchor(dataset, kind, mode):
     c = copy.deepcopy(dataset.episode('adjust_bottle', 0)['constraints'][0])

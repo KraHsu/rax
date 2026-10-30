@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
-from services.robotwin.annotation import reference_values, rotation
+from services.robotwin.annotation import reference_values, rotation, window_direction_values
 from services.robotwin.constraint_schema import read_embedded
 from services.robotwin.constraint_coverage import coverage_report
 
@@ -27,6 +27,12 @@ def feature_curve(handle, constraint):
     c = constraint; arm = c['subject'].split('_')[0]; p = c['parameters']
     pose = np.asarray(handle[f'endpose/{arm}_endpose']); frame = c['reference_frame']
     basis = rotation(frame['quaternion_wxyz']); kind = c['type']
+    if kind == 'window_direction_cone':
+        # Inactive values are a display placeholder, excluded by active_frames.
+        result = np.zeros(len(pose))
+        indices = np.arange(c['activation']['start'], c['activation']['end'])
+        result[indices] = window_direction_values(pose, c, indices)
+        return result
     if kind == 'motion_direction_cone':
         steps = np.diff(pose[:, :3], axis=0, prepend=pose[:1, :3]); axis = basis @ np.asarray(p['axis'])
         axial = steps @ axis; lateral = np.linalg.norm(steps-axial[:, None]*axis, axis=-1)

@@ -47,6 +47,8 @@ def reference_values(handle, constraint):
         indices = np.array([a['event']['frame']])
     frame = c['reference_frame']; basis = rotation(frame['quaternion_wxyz'])
     kind = c['type']
+    if kind == 'window_direction_cone':
+        return window_direction_values(pose, c, indices)
     if kind == 'motion_direction_cone':
         step = pose[indices, :3]-pose[indices-1, :3]
         axis = basis @ np.asarray(p['axis']); axial = step @ axis
@@ -70,6 +72,28 @@ def reference_values(handle, constraint):
         return np.linalg.norm(delta, axis=-1)
     axis = basis @ np.asarray(p['axis']); axial = delta @ axis
     return np.linalg.norm(delta-axial[:, None]*axis, axis=-1) if kind == 'radial_distance_interval' else axial
+
+
+def window_direction_values(pose, constraint, indices):
+    """Reference feature for schema 1.3; same fixed-segment fallback as training.
+
+    The display uses a whole-episode window; training may truncate that window
+    further at the current chunk start. Values outside activation are undefined.
+    """
+    c, p = constraint, constraint['parameters']
+    anchors = np.maximum(indices-p['window_steps'], c['activation']['start']-1)
+    step = pose[indices, :3]-pose[anchors, :3]
+    usable = ((indices-anchors >= p['minimum_window_steps'])
+              & (np.linalg.norm(step, axis=-1) >= p['minimum_reference_progress_m']))
+    axis = rotation(c['reference_frame']['quaternion_wxyz']) @ np.asarray(p['axis'])
+    axial = step @ axis
+    lateral = np.linalg.norm(step-axial[:, None]*axis, axis=-1)
+    scalar = np.maximum.reduce((lateral-math.tan(p['half_angle_rad'])*axial, -axial, np.zeros_like(axial)))
+    distance = np.linalg.norm(pose[indices, :3]-np.asarray(c['reference_frame']['origin_m']), axis=-1)
+    # Encoding adds slack back so [0, slack] has the exact same zero set as the
+    # radius fallback used by training, without silently inflating its radius.
+    fallback = np.maximum(distance-p['fallback_radius_m'], 0)+p['bounds'][1]
+    return np.where(usable, scalar, fallback)
 
 
 def validate_reference_bounds(bundle, handle):

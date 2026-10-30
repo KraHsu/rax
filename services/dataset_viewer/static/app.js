@@ -2,7 +2,8 @@
 const $ = id => document.getElementById(id);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {adjust_bottle:'调整瓶子',beat_block_hammer:'锤击积木',blocks_ranking_rgb:'积木颜色排序',blocks_ranking_size:'积木大小排序',click_alarmclock:'按下闹钟',click_bell:'按铃',dump_bin_bigbin:'倾倒垃圾桶',grab_roller:'双臂抓取滚筒',handover_block:'积木交接',handover_mic:'麦克风交接',hanging_mug:'悬挂马克杯',lift_pot:'抬起锅具',move_can_pot:'移动罐子到锅中',move_pillbottle_pad:'移动药瓶到垫子',move_playingcard_away:'移开扑克牌',move_stapler_pad:'移动订书机到垫子',open_laptop:'打开笔记本电脑',open_microwave:'打开微波炉',pick_diverse_bottles:'抓取不同瓶子',pick_dual_bottles:'双臂抓瓶',place_a2b_left:'左侧物体放置',place_a2b_right:'右侧物体放置',place_bread_basket:'面包放入篮子',place_bread_skillet:'面包放入煎锅',place_burger_fries:'汉堡与薯条放置',place_can_basket:'罐子放入篮子',place_cans_plasticbox:'罐子放入塑料箱',place_container_plate:'容器放到盘子上',place_dual_shoes:'双鞋放置',place_empty_cup:'放置空杯',place_fan:'放置风扇',place_mouse_pad:'鼠标放到垫子上',place_object_basket:'物体放入篮子',place_object_scale:'物体放到秤上',place_object_stand:'物体放到支架',place_phone_stand:'手机放到支架',place_shoe:'放置鞋子',press_stapler:'按压订书机',put_bottles_dustbin:'瓶子放入垃圾桶',put_object_cabinet:'物体放入柜子',rotate_qrcode:'旋转二维码',scan_object:'扫描物体',shake_bottle:'摇晃瓶子',shake_bottle_horizontally:'水平摇晃瓶子',stack_blocks_three:'堆叠三块积木',stack_blocks_two:'堆叠两块积木',stack_bowls_three:'堆叠三个碗',stack_bowls_two:'堆叠两个碗',stamp_seal:'盖章',turn_switch:'转动开关'};
-const kinds = {motion_direction_cone:'移动方向锥',axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
+const isDirection = c => ['motion_direction_cone','window_direction_cone'].includes(c?.type);
+const kinds = {window_direction_cone:'多帧净位移方向锥',motion_direction_cone:'移动方向锥',axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
 const statusNames = {queued:'等待采集',initializing:'初始化',recording:'采集中',recorded:'录制完成',failed:'需要处理',retry_queued:'等待重试'};
 const armName = arm => arm.startsWith('left') ? '左臂' : '右臂';
 const number = v => Number(v).toLocaleString('en-US');
@@ -32,10 +33,10 @@ function isActive(c,f){return !!c?.active_frames.includes(f);}
 function isViolation(c,f){const v=c.values[f],[lo,hi]=c.parameters.bounds;return isActive(c,f)&&(v<lo-1e-9||v>hi+1e-9);}
 function constraintArm(c){return c.subject.split('_')[0];}
 function featureDisplay(c) {
-  const factor=c.unit==='rad'?180/Math.PI:c.type==='motion_direction_cone'?1000:1;
+  const factor=c.unit==='rad'?180/Math.PI:isDirection(c)?1000:1;
   return {values:c.values.map(v=>v*factor),bounds:c.parameters.bounds.map(v=>v*factor),
-    unit:c.unit==='rad'?'°':c.type==='motion_direction_cone'?'mm':c.unit==='fraction'?'0–1':'m',
-    label:c.type==='motion_direction_cone'?'方向锥越界量':kinds[c.type]};
+    unit:c.unit==='rad'?'°':isDirection(c)?'mm':c.unit==='fraction'?'0–1':'m',
+    label:isDirection(c)?'方向锥越界量':kinds[c.type]};
 }
 function activeFeature(c,values) {
   // Inactive hypothetical values can be orders of magnitude larger and flatten
@@ -56,7 +57,7 @@ function positionBands(c,d) {
       return {bands:[{bounds,color:colors[i],frames:c.active_frames}],note:`${'XYZ'[i]} 轴允许范围${c.type==='axis_displacement_interval'?`，位移从原始 F${c.activation.start} 还原`:''}；其他位置自由度不由此项限制。`};}
     return {bands:[],note:'斜轴约束不拆成 XYZ 区间；切换「所选约束量」查看精确允许范围。'};
   }
-  return {bands:[],note:c.type==='motion_direction_cone'?'移动只约束相邻步的大致方向；方向锥见空间图，精确越界量见下方曲线。':
+  return {bands:[],note:isDirection(c)?(c.type==='window_direction_cone'?'多帧净位移方向；短窗口/低参考位移使用整段宽松球域。显示全轨迹窗口，训练会在 chunk 边界截断。':'移动只约束相邻步的大致方向；方向锥见空间图，精确越界量见下方曲线。'):
     c.type==='gripper_interval'?'该项作用于夹爪；切换「夹爪指令」查看允许范围。':'该项的允许范围见「所选约束量」及下方曲线。'};
 }
 function perpendicularBasis(axis) {
@@ -92,13 +93,18 @@ function spatialGeometry(c,d,f) {
       for(const i of [0,12,24,36])line([rings[0][i],rings[1][i]]);
     }
     arrow(ends[0],ends[1]);geometry.note='圆柱/圆柱壳允许区域，沿轴无限延伸；图中长度仅用于示意。';
-  }else if(c.type==='motion_direction_cone'){
-    const axis=worldAxis(c),anchor=poses[Math.max(0,f-1)].slice(0,3),length=.025;
+  }else if(isDirection(c)){
+    const windowed=c.type==='window_direction_cone',af=windowed?Math.max(c.activation.start-1,f-c.parameters.window_steps):Math.max(0,f-1);
+    const axis=worldAxis(c),anchor=poses[af].slice(0,3),length=.025;
+    if(windowed&&(f-af<c.parameters.minimum_window_steps||Math.hypot(...sub3(p,anchor))<c.parameters.minimum_reference_progress_m)){
+      for(const a of [[1,0,0],[0,1,0],[0,0,1]])line(circle3(origin,a,c.parameters.fallback_radius_m));
+      geometry.note='短窗口或低参考位移：使用整段固定球域作为宽松运动先验，不代表物理安全范围。';return geometry;
+    }
     const ring=circle3(add3(anchor,mul3(axis,length)),axis,length*Math.tan(c.parameters.half_angle_rad));
     line(ring);for(const i of [0,6,12,18,24,30,36,42])line([anchor,ring[i]]);
     arrow(anchor,add3(anchor,mul3(axis,length*1.25)));arrow(anchor,p,'actual');
     geometry.anchor=anchor;geometry.axis=axis;
-    geometry.note=`F${Math.max(0,f-1)} → F${f} · 方向半角 ${fmt(c.parameters.half_angle_rad*180/Math.PI,0)}°，越界容差 ${fmt(hi*1000,2)} mm。锥体线框为主体，未画近锥顶的容差扩张；锥体无限延伸，图示轴长 25 mm，无步长限制。金色箭头为实际一步，细小位移可能显示为点。`;
+    geometry.note=`F${af} → F${f} · 方向半角 ${fmt(c.parameters.half_angle_rad*180/Math.PI,0)}°，越界容差 ${fmt(hi*1000,2)} mm。锥体线框为主体，未画近锥顶的容差扩张；锥体无限延伸，图示轴长 25 mm，无步长限制。金色箭头为参考窗口净位移；训练窗口受 chunk 边界截断。`;
   }else if(c.type==='axis_angle_interval'){
     const axis=worldAxis(c),length=.06,actual=unit3(rotate3(poses[f].slice(3),c.parameters.local_axis));
     for(const angle of [lo,hi]){
@@ -264,7 +270,7 @@ function renderConstraintDetail() {
   const c=selectedConstraint();if(!c){$('constraint-detail').innerHTML='';return;}
   const a=c.activation;const valid=c.reference_violation<=1e-6;
   const unit=c.unit==='fraction'?'比例':c.unit;
-  $('constraint-detail').innerHTML=`<div class="detail-label">${c.type==='motion_direction_cone'?'方向锥越界量允许值':'允许区间'} · ${unit}</div><div class="bounds">${fmt(c.parameters.bounds[0])}<span>↔</span>${fmt(c.parameters.bounds[1])}</div><div class="detail-row"><span>当前参考值</span><b id="current-feature">${fmt(c.values[state.frame])} ${unit}</b></div><div class="detail-row"><span>当前帧激活</span><b id="current-active">${c.active_frames.includes(state.frame)?'是':'否'}</b></div><div class="detail-row"><span>参考校验</span><b class="${valid?'mint':''}">${valid?'通过':'超出区间'}</b></div><div class="detail-row"><span>惩罚 / 尺度</span><b>${c.penalty.kind==='squared_hinge'?'平方 hinge':'四次 hinge'} / ${c.penalty.scale}</b></div>${c.type==='motion_direction_cone'?`<div class="detail-row"><span>允许方向半角</span><b>${fmt(c.parameters.half_angle_rad*180/Math.PI,0)}°</b></div><div class="detail-row"><span>参考方向轴</span><b>[${c.parameters.axis.map(v=>fmt(v,2)).join(', ')}]</b></div><p class="coverage-note">作用于相邻末端位置之差；允许改变路径和步长。该项本身不保证到达目标。</p>`:''}<div class="evidence"><details><summary>标注依据与参考坐标系</summary><p>${escapeHTML(c.evidence.rationale)}</p><p class="mono">origin: [${c.reference_frame.origin_m.map(v=>fmt(v,4)).join(', ')}]<br>WXYZ: [${c.reference_frame.quaternion_wxyz.map(v=>fmt(v,3)).join(', ')}]</p>${a.mode==='endpoint'&&c.type.includes('displacement')?'<p>位移锚点必须在训练 chunk 内；缺少原始起点时屏蔽该约束。</p>':''}</details></div>`;
+  $('constraint-detail').innerHTML=`<div class="detail-label">${isDirection(c)?'方向锥越界量允许值':'允许区间'} · ${unit}</div><div class="bounds">${fmt(c.parameters.bounds[0])}<span>↔</span>${fmt(c.parameters.bounds[1])}</div><div class="detail-row"><span>当前参考值</span><b id="current-feature">${fmt(c.values[state.frame])} ${unit}</b></div><div class="detail-row"><span>当前帧激活</span><b id="current-active">${c.active_frames.includes(state.frame)?'是':'否'}</b></div><div class="detail-row"><span>参考校验</span><b class="${valid?'mint':''}">${valid?'通过':'超出区间'}</b></div><div class="detail-row"><span>惩罚 / 尺度</span><b>${c.penalty.kind==='squared_hinge'?'平方 hinge':'四次 hinge'} / ${c.penalty.scale}</b></div>${isDirection(c)?`<div class="detail-row"><span>允许方向半角</span><b>${fmt(c.parameters.half_angle_rad*180/Math.PI,0)}°</b></div><div class="detail-row"><span>参考方向轴</span><b>[${c.parameters.axis.map(v=>fmt(v,2)).join(', ')}]</b></div><p class="coverage-note">${c.type==='window_direction_cone'?'作用于多帧净位移；短窗口/低参考位移回退到固定整段球域（未校准先验）。':'作用于相邻末端位置之差。'}允许改变路径和步长，该项不保证到达或任务成功。</p>`:''}<div class="evidence"><details><summary>标注依据与参考坐标系</summary><p>${escapeHTML(c.evidence.rationale)}</p><p class="mono">origin: [${c.reference_frame.origin_m.map(v=>fmt(v,4)).join(', ')}]<br>WXYZ: [${c.reference_frame.quaternion_wxyz.map(v=>fmt(v,3)).join(', ')}]</p>${a.mode==='endpoint'&&c.type.includes('displacement')?'<p>位移锚点必须在训练 chunk 内；缺少原始起点时屏蔽该约束。</p>':''}</details></div>`;
 }
 function renderEvents() {
   const d=state.detail;
@@ -335,7 +341,7 @@ function renderConstraintTimeline() {
   const groups=new Map();
   d.constraints.forEach((c,i)=>{if(arm!=='both'&&constraintArm(c)!==arm)return;const key=`${constraintArm(c)}:${c.type}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push({c,i});});
   if(!groups.size){host.innerHTML='<div class="empty">当前机械臂尚无约束</div>';return;}
-  const short={motion_direction_cone:'方向',point_distance_interval:'球域',axis_position_interval:'轴位置',axis_displacement_interval:'轴位移',radial_distance_interval:'径向',axis_angle_interval:'轴夹角',angular_displacement_interval:'角位移',gripper_interval:'夹爪'};
+  const short={window_direction_cone:'多帧方向',motion_direction_cone:'方向',point_distance_interval:'球域',axis_position_interval:'轴位置',axis_displacement_interval:'轴位移',radial_distance_interval:'径向',axis_angle_interval:'轴夹角',angular_displacement_interval:'角位移',gripper_interval:'夹爪'};
   const W=640,L=48,R=15,H=groups.size*22+12,n=d.frames,x=f=>L+f/Math.max(n-1,1)*(W-L-R);
   let svg=`<svg viewBox="0 0 ${W} ${H}" aria-label="各约束激活帧，可点击选择">`;
   let row=0;
@@ -361,7 +367,7 @@ function renderCharts() {
     const feature=featureDisplay(c);series.push({values:activeFeature(c,feature.values),color:'#b6cbdf'});
     Object.assign(options,{label:feature.label,bands:visible?[{bounds:feature.bounds,frames:c.active_frames}]:[],constraint:visible?c:null});
     $('signal-legend').innerHTML=`<span><i class="line-key"></i>${armName(c.subject)} · ${feature.label} / ${feature.unit}</span>`;
-    note=c.type==='motion_direction_cone'?'仅绘制生效帧的方向锥越界量：允许区间内损失为零；它不是位置偏差或步长目标。':'仅绘制所选约束生效帧的参考物理特征，绿色区间是精确约束。';
+    note=isDirection(c)?'仅绘制生效帧的方向锥越界量：允许区间内损失为零；它不是位置偏差或步长目标。':'仅绘制所选约束生效帧的参考物理特征，绿色区间是精确约束。';
   }else{
     for(const a of arms){if(mode==='gripper')series.push({values:d.arms[a].gripper,color:a==='left'?'#76b8ff':'#83dfbf'});
       else for(let axis=0;axis<3;axis++)series.push({values:d.arms[a].pose.map(p=>p[axis]),color:colors[axis],dashed:a==='right'&&arms.length===2});}

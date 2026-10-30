@@ -1,6 +1,6 @@
 """Fill uncovered reference motion with broad directions, never a fitted path.
 
-Moving intervals constrain only adjacent-step direction. Stationary intervals
+Moving intervals constrain multi-step net direction. Stationary intervals
 use a loose hold region. Reviewed task-specific geometric constraints take
 precedence; rotations and gripper features are never invented just for coverage.
 """
@@ -11,14 +11,17 @@ import numpy as np
 
 from services.robotwin.constraint_coverage import coverage_masks, coverage_report, runs
 
-PREFIX = '__full_motion_v1__'
-POLICY = {'version': 2, 'half_angle_rad': math.radians(60), 'turn_margin_rad': math.radians(5),
+PREFIX = '__full_motion_v2__'
+LEGACY_PREFIX = '__full_motion_v1__'
+POLICY = {'version': 3, 'objective': 'window_direction_with_segment_region_fallback',
+          'half_angle_rad': math.radians(60), 'turn_margin_rad': math.radians(5),
           'maximum_predicted_anchor_span': 32,
+          'window_steps': 8, 'minimum_window_steps': 2, 'minimum_reference_progress_m': .005,
           'stationary_step_m': 1e-5, 'direction_slack_m': 1e-4, 'hold_margin_m': .02}
 
 
 def complete_constraints(handle, constraints, recording_id):
-    result = [copy.deepcopy(c) for c in constraints if not c['id'].startswith(PREFIX)]
+    result = [copy.deepcopy(c) for c in constraints if not c['id'].startswith((PREFIX, LEGACY_PREFIX))]
     length = len(handle['endpose/left_endpose'])
     if length < 2: raise ValueError('Full motion coverage needs at least two frames')
     for c in result:
@@ -65,13 +68,27 @@ def complete_constraints(handle, constraints, recording_id):
                     parameters = {'bounds': [0., radius]}; scale = POLICY['hold_margin_m']
                     rationale = 'Stationary reference interval: loose hold region, not per-frame position targets.'
                 else:
-                    kind = 'motion_direction_cone'
+                    kind = 'window_direction_cone'
+                    # One region for this whole segment, not a moving per-frame
+                    # imitation target. Used only when the chunk cannot expose
+                    # a sufficiently long, nontrivial reference displacement.
+                    center = positions[start-1:end].mean(axis=0)
+                    radius = float(np.linalg.norm(positions[start-1:end]-center, axis=-1).max())+POLICY['hold_margin_m']
+                    frame['origin_m'] = center.tolist()
                     parameters = {'axis': axis.tolist(), 'half_angle_rad': POLICY['half_angle_rad'],
-                                  'bounds': [0., POLICY['direction_slack_m']]}
+                                  'bounds': [0., POLICY['direction_slack_m']],
+                                  'window_steps': POLICY['window_steps'],
+                                  'minimum_window_steps': POLICY['minimum_window_steps'],
+                                  'minimum_reference_progress_m': POLICY['minimum_reference_progress_m'],
+                                  'fallback_radius_m': radius}
                     scale = .005
-                    rationale = ('Moving reference interval: broad 60-degree half-angle cone on adjacent physical EEF '
-                                 'displacements. No absolute path, speed or per-frame position targets. Zero motion is '
-                                 'allowed by this direction constraint; task endpoints and the base loss still matter.')
+                    rationale = ('Motion policy v3: broad 60-degree cone on up-to-8-step net EEF displacement, '
+                                 'truncated at reference turn/stop segments and the chunk start. Windows under two '
+                                 'steps or under 5 mm reference net movement use this entire segment\'s fixed '
+                                 'bounding sphere plus a 20 mm prior. It is not a per-frame position target. '
+                                 'All switches depend only on reference data. Zero predicted movement is allowed '
+                                 'by the direction branch; progress and task success are separate. Neither the '
+                                 'cone nor fallback region is physically calibrated or a safety guarantee.')
                 result.append({'id': f'{PREFIX}{arm}_{start}_{end}', 'type': kind, 'subject': arm+'_eef',
                     'reference_frame': frame, 'parameters': parameters,
                     'activation': {'mode': 'interval', 'start': start, 'end': end},

@@ -115,3 +115,13 @@ necessary but does not prove semantic correctness or physical robustness.
 The server will additionally require three distinct clean seeds and initial
 geometries before activating a template. A new event pattern, missing anchor,
 or validation failure is routed back for review.
+
+Schema 1.3 / publication policy v3 replaces newly generated coverage cones with
+`window_direction_cone`. Its direction uses up to eight observed action steps,
+truncated by the reference segment and the current chunk. Fewer than two steps
+or less than 5 mm reference net movement activates a fixed region covering the
+whole segment plus 20 mm, never a one-step direction fallback or a per-frame
+position target. All branch choices use reference data and validity masks only.
+These are uncalibrated motion priors, not physical success bounds. Old stored
+`motion_direction_cone` labels retain their schema 1.1/1.2 semantics. Neither
+direction kind is selected directly by a task template; the executor adds it.

@@ -49,7 +49,7 @@ def validate_template(t):
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
-        if r['type'] not in KINDS or r['type'] == 'motion_direction_cone' or r['subjects'] not in ('active_arms', 'left', 'right'):
+        if r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone') or r['subjects'] not in ('active_arms', 'left', 'right'):
             raise ValueError('Unsupported primitive or subject')
         if not isinstance(r['rationale'], str) or not r['rationale']:
             raise ValueError('Explain the selected feature')

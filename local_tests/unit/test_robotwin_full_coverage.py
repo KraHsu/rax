@@ -34,7 +34,7 @@ def test_full_coverage_splits_turns_and_stops_without_absolute_moving_targets(tm
     assert report['complete'] and report['covered'] == 7
     assert report['per_arm']['left']['orientation']['covered'] == 0  # Free rotation is not silently constrained.
     left = [c for c in cs if c['subject'] == 'left_eef']
-    assert [c['type'] for c in left] == ['motion_direction_cone', 'point_distance_interval', 'motion_direction_cone']
+    assert [c['type'] for c in left] == ['window_direction_cone', 'point_distance_interval', 'window_direction_cone']
     assert [c['activation'] for c in left] == [dict(mode='interval', start=a, end=b) for a,b in [(1,4),(4,6),(6,8)]]
     assert left[0]['parameters']['axis'] == [1.,0.,0.] and left[-1]['parameters']['axis'] == [0.,1.,0.]
     # Every possible short chunk, including ones wholly inside a long interval, has geometry for both arms.

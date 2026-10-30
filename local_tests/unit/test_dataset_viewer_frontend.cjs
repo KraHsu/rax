@@ -57,6 +57,16 @@ test('movement cone is attached to previous frame and rotated into world, not to
   assert.equal(api.spatialGeometry(c,d,5).lines.length,0); // inactive: no plausible-looking geometry
 });
 
+test('window cone uses net displacement and a fixed segment sphere at short boundaries',()=>{
+  const{api}=harness(),d=data(),c=constraint('window_direction_cone',{axis:[1,0,0],half_angle_rad:Math.PI/3,bounds:[0,.0001],window_steps:8,minimum_window_steps:2,minimum_reference_progress_m:.005,fallback_radius_m:.1});
+  const start=api.spatialGeometry(c,d,2);
+  assert.match(start.note,/固定球域/);
+  for(const line of start.lines)for(const p of line.points)near(norm(sub(p,c.reference_frame.origin_m)),.1);
+  const later=api.spatialGeometry(c,d,4);
+  near3(later.anchor,d.arms.left.pose[1].slice(0,3));
+  assert.equal(api.featureDisplay(c).unit,'mm');
+});
+
 test('angle cones support obtuse limits; angular displacement shows original orientation',()=>{
   const{api}=harness(),d=data(),c=constraint('axis_angle_interval',{local_axis:[1,0,0],reference_axis:[0,0,1],bounds:[Math.PI/6,Math.PI*5/6]});
   const g=api.spatialGeometry(c,d,3),origin=d.arms.left.pose[3].slice(0,3);
