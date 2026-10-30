@@ -29,6 +29,7 @@ from services.robotwin.annotation import embed_review
 from services.robotwin.annotation_templates import match, registry_readiness
 from services.robotwin.collection import atomic_json
 from services.robotwin.constraint_schema import read_embedded
+from services.robotwin.constraint_refinement import refinement_readiness, validate_frozen_gate
 from services.robotwin.programmatic_annotation import template_hash
 
 EXPECTED_TASKS = 50
@@ -91,7 +92,7 @@ def source_inventory(root):
     return manifest, inventory
 
 
-def select_plan(source_root, registry_root):
+def select_plan(source_root, registry_root, *, require_refinement=False):
     manifest, inventory = source_inventory(source_root)
     reports, required, entries = {}, {}, []
     identities = {}
@@ -131,12 +132,15 @@ def select_plan(source_root, registry_root):
     readiness = registry_readiness(registry_root, required)
     if not readiness['ready']:
         raise ValueError('Selected template evidence failed independent reassessment')
+    refinement = refinement_readiness(registry_root, required)
+    if (require_refinement and not refinement['required']) or not refinement['ready']:
+        raise ValueError('Independent constraint refinement evidence is not ready; publication withheld')
     return dict(
         publisher_version=PUBLISHER_VERSION, acceptance_version=ACCEPTANCE_VERSION,
         source_root=str(Path(source_root).resolve()), registry_root=str(Path(registry_root).resolve()),
         source_manifest_sha256=json_hash(manifest), tasks=manifest['tasks'], per_task=EPISODES_PER_TASK,
         annotation_policy_sha256=annotation_policy_fingerprint(), evaluator_sha256=evaluator_fingerprint(),
-        required_templates=required, template_reports=reports, files=entries,
+        required_templates=required, template_reports=reports, refinement_gate=refinement, files=entries,
     )
 
 
@@ -167,7 +171,7 @@ def check_file(root, row):
         read_embedded(handle)
 
 
-def validate_publication(root):
+def validate_publication(root, *, require_refinement=False):
     """Read-only full file/proof validation, suitable for the training launch gate."""
     root = Path(root).resolve()
     plan = read_json(root/'publication_plan.json')
@@ -182,6 +186,10 @@ def validate_publication(root):
     if (plan['annotation_policy_sha256'] != annotation_policy_fingerprint()
             or plan['evaluator_sha256'] != evaluator_fingerprint()):
         raise ValueError('Publication annotation/evaluator code changed')
+    refinement = plan.get('refinement_gate', dict(required=False))
+    if manifest.get('refinement_gate', dict(required=False)) != refinement:
+        raise ValueError('Published refinement requirement differs from its frozen plan')
+    validate_frozen_gate(refinement, required_templates=plan['required_templates'], required=require_refinement)
     files = manifest['files']
     if (len(plan['tasks']) != EXPECTED_TASKS or len(set(plan['tasks'])) != EXPECTED_TASKS
             or plan['per_task'] != EPISODES_PER_TASK
@@ -246,7 +254,7 @@ def validate_publication(root):
                 template_report_hashes={k: v['report_sha256'] for k, v in plan['template_reports'].items()})
 
 
-def publish(source_root, registry_root, output):
+def publish(source_root, registry_root, output, *, require_refinement=False):
     source_root, registry_root, output = map(lambda p: Path(p).resolve(), (source_root, registry_root, output))
     if (source_root == output or source_root in output.parents or output in source_root.parents
             or registry_root == output or registry_root in output.parents or output in registry_root.parents):
@@ -256,11 +264,11 @@ def publish(source_root, registry_root, output):
     with output.with_name('.'+output.name+'.publish.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Selection and all acceptance checks finish before any new data copy.
-        plan = select_plan(source_root, registry_root)
+        plan = select_plan(source_root, registry_root, require_refinement=require_refinement)
         if output.exists():
             if read_json(output/'publication_plan.json') != plan:
                 raise ValueError('Published source/template/proof changed; use a new output version')
-            return validate_publication(output)
+            return validate_publication(output, require_refinement=require_refinement)
         if staging.exists():
             if staging.is_symlink():
                 raise ValueError('Staging directory must not be a symlink')
@@ -340,10 +348,10 @@ def publish(source_root, registry_root, output):
                      recorded_tasks=plan['tasks'], source_root=str(source_root), updated_unix=time.time())
         atomic_json(staging/'batch_manifest.json', batch)
         atomic_json(staging/'acceptance_manifest.json', dict(version=ACCEPTANCE_VERSION, complete=True,
-                    plan_sha256=json_hash(plan), source_root=str(source_root), files=rows))
+                    plan_sha256=json_hash(plan), source_root=str(source_root), refinement_gate=plan['refinement_gate'], files=rows))
         atomic_json(staging/'snapshot_complete.json', dict(source=str(source_root), plan_sha256=json_hash(plan),
                     acceptance_manifest_sha256=file_hash(staging/'acceptance_manifest.json'), files=rows))
-        validated = validate_publication(staging)
+        validated = validate_publication(staging, require_refinement=require_refinement)
         os.replace(staging, output)
         return validated
 
@@ -354,13 +362,15 @@ def main():
     parser.add_argument('--registry-root', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--validate-only', action='store_true')
+    parser.add_argument('--require-refinement', action='store_true',
+                        help='Require independent model-aware holdout evidence even if the registry marker is missing')
     args = parser.parse_args()
     if args.validate_only:
-        result = validate_publication(args.output)
+        result = validate_publication(args.output, require_refinement=args.require_refinement)
     else:
         if args.source_root is None or args.registry_root is None:
             parser.error('--source-root and --registry-root are required for publication')
-        result = publish(args.source_root, args.registry_root, args.output)
+        result = publish(args.source_root, args.registry_root, args.output, require_refinement=args.require_refinement)
     print(json.dumps(result, sort_keys=True, allow_nan=False))
 
 

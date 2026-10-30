@@ -89,6 +89,23 @@ def test_only_counterfactually_accepted_templates_can_publish(publication):
     assert not publication['output'].with_name('.published.publishing').exists()
 
 
+def test_refinement_marker_prevents_pilot_only_publication(publication):
+    from services.robotwin.constraint_refinement import DEFAULT_PROTOCOL
+    atomic_json(publication['registry']/'refinement_requirement.json', dict(version=1, protocol=DEFAULT_PROTOCOL))
+    with pytest.raises(ValueError, match='refinement evidence is not ready'):
+        run(publication)
+    assert not publication['output'].exists()
+    assert not publication['output'].with_name('.published.publishing').exists()
+
+
+def test_training_cannot_silently_omit_required_refinement(publication):
+    with pytest.raises(ValueError, match='refinement evidence is not ready'):
+        publisher.publish(publication['source'], publication['registry'], publication['output'], require_refinement=True)
+    run(publication)  # Historical pilot-only artifact remains explicitly distinguishable.
+    with pytest.raises(ValueError, match='refinement evidence is required'):
+        publisher.validate_publication(publication['output'], require_refinement=True)
+
+
 def test_existing_manual_annotation_does_not_bypass_new_template(publication):
     # All fixture source constraints are empty/manual; every episode still needs
     # a matching, accepted template. A second event changes this episode's signature.

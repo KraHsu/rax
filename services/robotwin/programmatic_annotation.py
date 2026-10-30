@@ -16,6 +16,28 @@ from services.robotwin.full_trajectory import complete_constraints
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
 SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum')
+GRIPPER_PLATEAU_EPSILON = 1e-6
+
+
+def margin_unit(kind):
+    if kind == 'gripper_interval':
+        return 'fraction', 1.
+    if kind in ('axis_angle_interval', 'angular_displacement_interval'):
+        return 'rad', math.pi
+    return 'm', 1.
+
+
+def allowed_margin(rule, default):
+    """Physical freedom is separate from the penalty's numerical scale."""
+    value = rule.get('allowed_margin')
+    if value is None:
+        return default, default
+    keys(value, ('lower', 'upper', 'unit'))
+    unit, maximum = margin_unit(rule['type'])
+    if value['unit'] != unit or any(type(value[k]) not in (int, float)
+            or not math.isfinite(value[k]) or not 0 <= value[k] <= maximum for k in ('lower', 'upper')):
+        raise ValueError('Invalid physical allowed_margin or unit')
+    return float(value['lower']), float(value['upper'])
 
 
 class OutsideTemplate(ValueError):
@@ -45,12 +67,13 @@ def validate_template(t):
     ids = set()
     for r in t['rules']:
         keys(r, ('id', 'type', 'subjects', 'selector', 'origin', 'orientation', 'parameters', 'rationale'),
-             ('start_anchor', 'required'))
+             ('start_anchor', 'required', 'allowed_margin'))
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
         if r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone') or r['subjects'] not in ('active_arms', 'left', 'right'):
             raise ValueError('Unsupported primitive or subject')
+        allowed_margin(r, 0.)
         if not isinstance(r['rationale'], str) or not r['rationale']:
             raise ValueError('Explain the selected feature')
         if 'required' in r and type(r['required']) is not bool:
@@ -79,7 +102,7 @@ def validate_template(t):
         keys(s, fields)
         if kind == 'events' and (s['direction'] not in ('increasing', 'decreasing', 'any') or s['occurrence'] not in ('all', 'first', 'last')):
             raise ValueError('Invalid event selector')
-        if kind == 'gripper_plateaus' and s['state'] not in ('closed', 'open'):
+        if kind == 'gripper_plateaus' and s['state'] not in ('closed', 'open', 'all'):
             raise ValueError('Invalid plateau state')
         if 'after' in s and s['after'] not in ('episode_start', 'first_close', 'last_close'):
             raise ValueError('Invalid selection anchor')
@@ -145,7 +168,18 @@ def selections(selector, arm):
         values = arm['pose'][start:, :3] @ np.asarray(selector['axis'])
         index = start + int(np.argmin(values) if selector['which'] == 'min' else np.argmax(values))
         return [{'mode': 'endpoint', 'start': index, 'end': index+1}]
-    mask = np.abs(arm['grip']-(0 if selector['state'] == 'closed' else 1)) <= 1e-6
+    if selector['state'] == 'all':
+        # Freeze maximal stable reference runs, including partial openings.
+        # Compare to each run's first value, so many small changes cannot drift
+        # through an arbitrarily broad "plateau". Single frames are excluded.
+        runs = []; lo = start
+        for index in range(start+1, length+1):
+            if index == length or abs(arm['grip'][index]-arm['grip'][lo]) > GRIPPER_PLATEAU_EPSILON:
+                if index-lo >= 2:
+                    runs.append({'mode': 'interval', 'start': lo, 'end': index})
+                lo = index
+        return runs
+    mask = np.abs(arm['grip']-(0 if selector['state'] == 'closed' else 1)) <= GRIPPER_PLATEAU_EPSILON
     mask[:start] = False
     edges = np.diff(np.r_[False, mask, False].astype(int))
     return [{'mode': 'interval', 'start': int(lo), 'end': int(hi)}
@@ -195,7 +229,8 @@ def instantiate(handle, template):
                                       'not a physically calibrated feasible region or proof of contact/grasp/support. '
                                       'Displacement requires its original start anchor in the training chunk.'}}
                 values = reference_values(handle, c)
-                lower, upper = float(values.min()-scale), float(values.max()+scale)
+                lower_margin, upper_margin = allowed_margin(rule, scale)
+                lower, upper = float(values.min()-lower_margin), float(values.max()+upper_margin)
                 if kind in ('point_distance_interval', 'radial_distance_interval', 'gripper_interval', 'axis_angle_interval', 'angular_displacement_interval'):
                     lower = max(0., lower)
                 if kind == 'gripper_interval': upper = min(1., upper)
