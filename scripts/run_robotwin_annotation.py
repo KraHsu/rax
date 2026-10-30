@@ -92,7 +92,9 @@ each episode. Copy the observed event_signature into signatures; do not expand
 coverage beyond the observed pattern. Run ./validate_task_template.py
 task_template.json and inspect its audit. You must provide both the per-episode
 annotations.json/REPORT.md and the reusable template. Explain any omitted
-features that the selector language cannot safely express. The three-seed gate
+features that the selector language cannot safely express. Reference consistency alone
+does not activate a template: held-out native success/failure counterfactual evidence
+is required by the server's versioned acceptance gate. The three-reference check
 on the data host checks numerical validity, not physical feasibility.\n'''
         from services.robotwin.programmatic_annotation import instantiate_review
         for relative in ('services/__init__.py','services/robotwin/__init__.py'):

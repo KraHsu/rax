@@ -112,8 +112,15 @@ includes the generated constraints, reference audit, and full-coverage report. I
 selected frames and physical meanings as well; admitting the demonstration is
 necessary but does not prove semantic correctness or physical robustness.
 
-The server will additionally require three distinct clean seeds and initial
-geometries before activating a template. A new event pattern, missing anchor,
+Three distinct successful clean references establish consistency only. They no
+longer activate a template. Publication also requires the versioned held-out
+counterfactual gate: real native-success variations must be admitted and real
+native-task failures must be rejected. Do not label a perturbation as failed
+without executing it. Planning/tracking failures are separate. The collector
+freezes the reference, template, cases and implementation hashes; CPU validation
+recomputes constraint violations on command-index-aligned measured EEF poses and
+nominal gripper command fractions. Generated gripper events never select the
+activation. Missing evidence leaves the template a candidate. A new event pattern, missing anchor,
 or validation failure is routed back for review.
 
 Schema 1.3 / publication policy v3 replaces newly generated coverage cones with

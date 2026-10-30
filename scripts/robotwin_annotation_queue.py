@@ -63,10 +63,35 @@ def complete(receipt_path,claim_id,proposal,agent_run,template=None):
         raise ValueError('No accepted constraints; raw recording remains outside data/')
     episode=Path(receipt['path']);target=episode.parent.parent/'data'/episode.name
     if target.exists():raise FileExistsError(target)
+    root = receipt_path.parents[3]
+    control_path = root/'annotation_control.json'
+    control = json.loads(control_path.read_text()) if control_path.exists() else {}
+    acceptance_proof = None
+    if control.get('acceptance_version') == 2:
+        # New publication cannot bypass the counterfactual gate through an
+        # individually reviewed proposal. Bootstrap reviews stay in raw/.
+        from services.robotwin.annotation_templates import match
+        from services.robotwin.acceptance import json_hash
+        from services.robotwin.programmatic_annotation import template_hash
+        matched = match(root, receipt['task'], episode)
+        if matched is None:
+            raise ValueError('Counterfactual acceptance required; keep bootstrap reference in raw/reviews')
+        entry, accepted_constraints, _ = matched
+        if json_hash(proposal['constraints']) != json_hash(accepted_constraints):
+            raise ValueError('Proposal differs from the counterfactually accepted template')
+        acceptance_proof = dict(entry['acceptance'], template_sha256=template_hash(entry['template']))
     result=embed_review(episode,proposal,agent_run=agent_run)
     if result['accepted']<1:raise ValueError('Annotation did not pass reference validation')
+    if acceptance_proof is not None:
+        import h5py
+        with h5py.File(episode, 'r+') as handle:
+            handle.create_dataset('trajectory_constraints/acceptance',
+                                  data=json.dumps(acceptance_proof, sort_keys=True),
+                                  dtype=h5py.string_dtype('utf-8'))
     target.parent.mkdir(exist_ok=True);episode.rename(target)
     receipt.update(annotation_status='done',path=str(target),annotation_result=result,finished_unix=time.time())
+    if acceptance_proof is not None:
+        receipt['constraint_acceptance'] = acceptance_proof
     receipt['annotation_result']['episode']=str(target)
     atomic_json(receipt_path,receipt)
     response={'published':str(target),'accepted':result['accepted'],'revision':result['revision']}

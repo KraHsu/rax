@@ -231,3 +231,82 @@ python scripts/summarize_robotwin_tolerances.py --root runtime/tolerance_study/s
 [514-trial validation report](robotwin_tolerance_20261022.md) for the measured
 limits, joint confirmation, and the distinction between command and action-data
 coordinates.
+
+## Counterfactual template acceptance, version 2
+
+Successful references fitting their own labels are necessary but do not show
+that labels reject failure. New registry activation therefore uses
+`services.robotwin.acceptance.assess_evidence`, which is CPU-only. Native
+counterfactual collection still requires the RoboTwin GPU environment. Training
+continues to use only offline actions and annotations, with no simulator in loss.
+
+Every template hash used by a new dataset needs its own evidence report. The
+pilot protocol requires at least three held-out clean seeds and scenes, two
+successful constraint-admitted baseline replays per seed, three successful
+nonbaseline variations, and six actual native task failures. Successes and
+failures must each cover three seeds. Position, orientation, gripper timing and
+coupled interventions must have completed realized trials; failures must span
+at least two families. Failed variations must all be rejected, and no more than
+20% of successful variations may be rejected. A filter that rejects everything
+cannot pass. These small selected samples are a pilot gate, not an IID success
+estimate or a continuous feasible-region guarantee.
+
+The runner freezes `experiment_manifest.json` before trials and writes
+`trials.jsonl`. Context includes the exact template, annotation implementation
+hash, native revision, explicit training seed/scene exclusions, and all planned
+trial IDs. Raw native outcomes and reference/actual traces live in hashed JSON
+artifacts. The CPU gate reconstructs the reference labels from the sealed
+template and computes violations itself. It never trusts a supplied
+`constraint_pass` flag, uses reference events for activation, and uses reference
+motion for window/fallback selection. EEF poses are measured, but the recorded
+gripper values are nominal commands, not contact forces or grasp measurements.
+Native success is independently recorded as ever satisfying the native predicate
+during fixed-horizon replay. Baseline replay must establish compatibility with
+that protocol before perturbations count.
+
+Missing frames, changed artifacts, missing planned trials, unsupported templates,
+failed baselines, and random/training leakage block the gate. Planner failures,
+incomplete execution and unrealized interventions do not become task-failure
+negative examples. Validation bundles are tagged `validation/clean_heldout` and
+are rejected by the training reader. No random benchmark recordings enter the
+new training dataset.
+
+Attach evidence to a separate registry, leaving the original dataset untouched:
+
+```python
+from services.robotwin.annotation_templates import attach_evidence, registry_readiness
+
+report = attach_evidence(new_registry_root, task, template_sha256, evidence_root,
+                         reference_root=old_training_dataset)
+ready = registry_readiness(new_registry_root, {task: [template_sha256]})
+```
+
+`reference_root` independently checks that the evidence exclusion list contains
+all source training seeds/scenes. `registry_readiness` revalidates raw artifacts
+by default. `match` uses only verified version-2 templates unless the caller
+explicitly requests a read-only legacy lookup. Old `active` status alone is not
+accepted. With `annotation_control.json` containing `acceptance_version: 2`,
+manual publication also requires an accepted template and exactly its generated
+constraints; bootstrap reviews remain in `raw/` and `reviews/`. The new dataset
+publisher additionally records the template/report identities for each episode
+and must check all templates it actually used before starting training.
+
+Create the new dataset only after the per-template reports pass:
+
+```bash
+python scripts/publish_robotwin_constraint_dataset.py \
+  --source-root OLD_DATASET --registry-root NEW_REGISTRY --output NEW_DATASET
+python scripts/publish_robotwin_constraint_dataset.py --validate-only --output NEW_DATASET
+```
+
+The publisher copies HDF5 files to different inodes in a hidden staging directory,
+then publishes atomically after all 2,500 episodes and their proofs validate.
+Resume checks source, template and evidence hashes. The proof is stored separately
+at `trajectory_constraints/acceptance`, preserving the strict geometric bundle
+schema. Raw evidence artifacts must remain readable for publication and training
+validation; copying only a boolean report is insufficient.
+
+Raw artifact and receipt hashes are exact. Recomputed floating-point geometry and
+tracking summaries use only `rtol=1e-10, atol=1e-12` for cross-Python/NumPy
+consistency; keys, booleans, discrete indices and pass/fail decisions remain
+exact. This numerical comparison does not widen any physical acceptance bound.

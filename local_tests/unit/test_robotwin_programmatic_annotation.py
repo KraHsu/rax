@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from services.robotwin.collection import atomic_json
-from services.robotwin.constraint_schema import HDF5_KEY, read_embedded
+from services.robotwin.constraint_schema import HDF5_KEY
 from services.robotwin.programmatic_annotation import OutsideTemplate, instantiate, validate_template
 from services.robotwin.annotation_templates import install, match, refresh
 from services.robotwin.full_trajectory import PREFIX
@@ -101,7 +101,7 @@ def test_extremum_is_reference_selected_and_orientation_is_radians(tmp_path):
         assert np.allclose(constraints[-1]['parameters']['bounds'],np.pi/2+np.array([-.0872664626,.0872664626]))
 
 
-def test_registry_requires_three_distinct_seed_and_geometry_references(tmp_path):
+def test_three_distinct_references_do_not_replace_counterfactual_evidence(tmp_path):
     directory=tmp_path/'adjust_bottle/aloha-agilex_clean_50'
     source=episode(directory/'data/episode0.hdf5')
     episode(directory/'raw/episode1.hdf5',seed=1,fingerprint='scene0')
@@ -110,11 +110,13 @@ def test_registry_requires_three_distinct_seed_and_geometry_references(tmp_path)
     episode(directory/'raw/episode2.hdf5',seed=2)
     episode(directory/'raw/episode3.hdf5',seed=3)
     refresh(tmp_path,'adjust_bottle')
-    entry,_,_=match(tmp_path,'adjust_bottle',source)
-    assert entry['status']=='active' and {e['seed'] for e in entry['validation']}=={0,2,3}
+    assert match(tmp_path,'adjust_bottle',source) is None
+    entry,_,_=match(tmp_path,'adjust_bottle',source,include_candidates=True)
+    assert entry['status']=='candidate' and {e['seed'] for e in entry['validation']}=={0,2,3}
+    assert entry['reference_consistent'] and entry['acceptance_blocker']=='counterfactual_evidence_missing'
 
 
-def test_batch_publishes_constraints_and_leaves_agent_leases_untouched(tmp_path):
+def test_batch_blocks_unvalidated_templates_and_leaves_agent_leases_untouched(tmp_path):
     from scripts.run_robotwin_programmatic_annotation import run_once
     from scripts.robotwin_annotation_queue import claim
     directory=tmp_path/'adjust_bottle/aloha-agilex_clean_50'
@@ -129,10 +131,7 @@ def test_batch_publishes_constraints_and_leaves_agent_leases_untouched(tmp_path)
     lease=directory/'annotation_queue/episode2.json';receipt=json.loads(lease.read_text())
     receipt.update(annotation_status='processing',claim_id='agent-existing');atomic_json(lease,receipt)
     results=run_once(tmp_path)
-    assert len(results)==2
-    with h5py.File(directory/'data/episode1.hdf5') as h:
-        assert len([c for c in read_embedded(h)['constraints'] if not c['id'].startswith(PREFIX)])==4
-        assert json.loads(h['trajectory_constraints/coverage'][()])['complete']
-        assert json.loads(h['trajectory_constraints/history'][()])[0]['agent_run'].startswith('template:')
+    assert results==[]
+    assert not (directory/'data/episode1.hdf5').exists()
     assert json.loads(lease.read_text())['claim_id']=='agent-existing'
     assert (directory/'raw/episode2.hdf5').exists()
