@@ -25,6 +25,16 @@ DEFAULT_PROTOCOL = dict(version=1, confidence=.95, maximum_scene_failure_risk=.1
                         require_zero_observed_false_accepts=True)
 ACTIVATION_FIELDS = ('selector', 'subjects', 'start_anchor', 'required')
 SOURCES = ('expert', 'crafted', 'model')
+GRIPPER_HYPOTHESIS_FAMILIES = {
+    'gripper_timing': 'legacy gripper timing or state',
+    'early_close': 'closure before reference engagement',
+    'never_close': 'missing closure',
+    'never_release': 'missing release',
+    'open_early': 'release before reference support',
+    'grip_chatter': 'repeated gripper state changes',
+    'gripper_chatter': 'repeated gripper state changes',
+    'coupled_motion_gripper': 'combined motion and gripper hypothesis',
+}
 
 
 def read(path):
@@ -137,6 +147,12 @@ def classify(row):
                 false_reject=bool(valid and row['native_success'] and not row['commanded_constraint_pass']))
 
 
+def observed_actual_false_accept(row):
+    """Measured action-space counterexample, without exact-intervention causality."""
+    validate_ledger_row(row)
+    return bool(row['execution_complete'] and row['actual_constraint_pass'] is True and row['native_success'] is False)
+
+
 def source_summary(rows):
     counts = dict(received=len(rows), eligible=0, accepted=0, native_successes=0,
                   false_accepts=0, strong_false_accepts=0, false_rejects=0,
@@ -146,8 +162,7 @@ def source_summary(rows):
         decision = classify(row)
         # Descriptive measured evidence survives failed intervention tracking.
         # This does not enter the precise-command causal/acceptance denominator.
-        counts['observed_actual_false_accepts'] += bool(
-            row['execution_complete'] and row['actual_constraint_pass'] is True and row['native_success'] is False)
+        counts['observed_actual_false_accepts'] += observed_actual_false_accept(row)
         if not decision['eligible']:
             continue
         counts['eligible'] += 1
@@ -246,9 +261,22 @@ def propose_revision(parent, patch, development, *, protocol=None):
     if not isinstance(patch['operations'], list) or not patch['operations']:
         raise ValueError('A nonempty whitelisted revision is required')
     revised = copy.deepcopy(parent)
+    coverage_edit = False
     for op in patch['operations']:
+        if not isinstance(op, dict):
+            raise ValueError('Only data-only revision operations are allowed')
+        if op.get('op') == 'set_coverage_policy':
+            if set(op) != {'op', 'policy'} or coverage_edit or not isinstance(op['policy'], dict):
+                raise ValueError('Coverage policy must be one explicit data-only parameter object')
+            # The template validator owns the physical-unit/range whitelist.
+            # No coverage toggle, activation changes or executable code exist
+            # in this operation, and unchanged coverage fills every frame.
+            revised['coverage_policy'] = copy.deepcopy(op['policy'])
+            validate_template(revised)
+            coverage_edit = True
+            continue
         if set(op) != {'op', 'rule'} or op['op'] not in ('add_rule', 'replace_rule'):
-            raise ValueError('Only data-only add_rule/replace_rule operations are allowed')
+            raise ValueError('Only data-only add_rule/replace_rule/set_coverage_policy operations are allowed')
         rule = copy.deepcopy(op['rule'])
         matches = [i for i, existing in enumerate(revised['rules']) if existing['id'] == rule.get('id')]
         if op['op'] == 'add_rule':
@@ -281,8 +309,8 @@ def gripper_phase_proposal(parent, development, *, protocol=None):
     The family is a hypothesis selector, not a claim of causality or approval.
     Independent held-out native runs still decide whether this revision works.
     """
-    counterexamples = [r for r in development['rows'] if classify(r)['strong_false_accept']
-                       and ('grip' in r['family'] or 'grip' in r.get('candidate_id', ''))]
+    counterexamples = [r for r in development['rows'] if r['family'] in GRIPPER_HYPOTHESIS_FAMILIES
+                       and observed_actual_false_accept(r)]
     if not counterexamples:
         return None
     rules = []
@@ -294,12 +322,14 @@ def gripper_phase_proposal(parent, development, *, protocol=None):
         rules.append(dict(id=identifier, type='gripper_interval', subjects='active_arms',
                           selector=dict(kind='gripper_plateaus', state=state, after='episode_start'),
                           origin='world', orientation='world', parameters={},
-                          rationale='Development counterexample suggests an event-only gripper loophole; '
+                          rationale='Measured development counterexample suggests an event-only gripper loophole; '
+                                    'a failed intervention tracking check does not establish exact-command causality. '
                                     'test reference-activated phase opening/holding on independent scenes.'))
     if not rules:
         return None
     patch = dict(version=VERSION, base_template_sha256=template_hash(parent),
-                 reason='Test a gripper-phase hypothesis from verified constraint-pass/task-fail development cases.',
+                 reason='Development-only gripper-phase hypothesis from verified measured-trajectory constraint-pass/task-fail '
+                        'cases; not an accepted revision or proof of exact-intervention causality.',
                  evidence_ids=[r['trial_id'] for r in counterexamples],
                  operations=[dict(op='add_rule', rule=r) for r in rules])
     return propose_revision(parent, patch, development, protocol=protocol)

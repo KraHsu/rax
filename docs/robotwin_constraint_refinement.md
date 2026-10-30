@@ -15,7 +15,7 @@ including zero discovered failures, activates a template or starts training.
    passing actual trajectories identify a stronger subset. Incomplete/planner
    failures do not become native task failures.
 2. **Revision proposal:** `propose_revision` accepts cited development evidence
-   and only `add_rule`/`replace_rule`. Task, signatures, existing subjects and
+   and only `add_rule`/`replace_rule`/`set_coverage_policy`. Task, signatures, existing subjects and
    activation anchors cannot change to hide a counterexample. Rule count/growth
    is bounded. `allowed_margin` has explicit `m`, `rad`, or `fraction` units and
    is independent of penalty scale. The reference activates every rule.
@@ -107,3 +107,32 @@ retained successes and unresolved counterexamples. This is offline screening,
 not a new simulator experiment, and every output remains `proposal_not_accepted`.
 Stable plateaus include partial openings, use explicit `1e-6` stability against
 the segment's first value, and span at least two reference frames.
+The gripper proposer recognizes a finite family map, including `early_close`,
+`never_close`, `never_release`, `open_early`, and the supported chatter names.
+It can cite a completed measured trajectory that passes the constraints but
+fails the native task even if exact intervention tracking failed. This remains
+an observed action-space counterexample and a development hypothesis; it does
+not establish exact-command causality or activate a revision. An unrealized
+command whose actual trajectory violates constraints cannot trigger this rule.
+
+## Data-only full-motion tolerance revisions
+
+One patch operation may be `{"op":"set_coverage_policy","policy":{
+"half_angle_rad":1.2,"hold_margin_m":0.04,"direction_slack_m":0.005}}`.
+These values illustrate the schema, not validated task parameters. The policy
+may contain a nonempty subset of those three keys. It replaces the template's
+explicit override object; omitted keys use the unchanged default coverage
+policy. The existing template validator applies the physical-unit whitelist:
+angle 5–85 degrees expressed in radians, hold radius 0.001–0.1 metres, and
+direction slack 0–0.05 metres. These limits are search-budget priors, not
+physical safety guarantees.
+With the existing cone-plus-slack formula, increasing the half-angle does not
+guarantee global set inclusion for small backward displacements. Revisions
+must therefore be evaluated as new allowed sets, not assumed monotonic relaxations.
+
+This operation cannot disable full coverage, move reference activation masks,
+change reference segmentation, or change loss penalty scales. It must cite
+development evidence, produces a new template hash, and remains only a proposal
+until the revised policy and generator are frozen and pass fresh independent
+native holdout. Arbitrary keys, code, booleans, nonfinite numbers and repeated
+coverage replacements in one patch are rejected.

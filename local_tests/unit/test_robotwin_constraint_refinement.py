@@ -78,6 +78,32 @@ def test_gripper_proposal_is_data_only_and_does_not_disable_anchors():
         gate.propose_revision(template(), bad, dev)
 
 
+def test_coverage_revision_is_evidence_bound_and_preserves_rule_anchors():
+    parent = template(); dev = gate.development_summary([row(success=True, accepted=False)])
+    patch = dict(version=1, base_template_sha256=template_hash(parent),
+                 reason='Test wider allowed motion from an independently observed successful rejected trajectory.',
+                 evidence_ids=[dev['rows'][0]['trial_id']], operations=[dict(
+                     op='set_coverage_policy', policy=dict(half_angle_rad=1.2, hold_margin_m=.04, direction_slack_m=.005))])
+    revision = gate.propose_revision(parent, patch, dev)
+    assert revision['state'] == 'revision_proposed'
+    assert revision['template_sha256'] != template_hash(parent)
+    assert revision['template']['rules'] == parent['rules']
+    assert revision['template']['signatures'] == parent['signatures']
+    assert revision['template']['coverage_policy'] == patch['operations'][0]['policy']
+    assert 'coverage_policy' not in parent
+    for invalid in ({}, {'enabled': False}, {'hold_margin_m': True}, {'half_angle_rad': 3.14},
+                    {'hold_margin_m': float('nan')}, {'python': 'disable_coverage()'}):
+        bad = copy.deepcopy(patch); bad['operations'][0]['policy'] = invalid
+        with pytest.raises(ValueError):
+            gate.propose_revision(parent, bad, dev)
+    bad = copy.deepcopy(patch); bad['evidence_ids'] = ['unseen_holdout_case']
+    with pytest.raises(ValueError, match='Development|development'):
+        gate.propose_revision(parent, bad, dev)
+    bad = copy.deepcopy(patch); bad['operations'] *= 2
+    with pytest.raises(ValueError, match='one explicit'):
+        gate.propose_revision(parent, bad, dev)
+
+
 def test_dev_cannot_issue_confidence_or_become_final_holdout():
     data = inputs()
     assert data[3]['confidence_eligible'] is False
@@ -218,6 +244,22 @@ def test_measured_actual_false_accept_survives_unrealized_intervention():
     result = gate.source_summary([value])
     assert result['eligible'] == 0 and result['false_accepts'] == 0
     assert result['observed_actual_false_accepts'] == 1
+
+
+@pytest.mark.parametrize('family', ['early_close', 'never_close', 'open_early', 'grip_chatter', 'gripper_chatter'])
+def test_complete_measured_gripper_failure_proposes_without_claiming_exact_intervention(family):
+    value = row(family=family, success=False, accepted=True)
+    value['realized'] = False  # Native actual trace passed, but desired intervention was not tracked precisely.
+    dev = gate.development_summary([value])
+    assert dev['sources']['crafted']['strong_false_accepts'] == 0
+    proposal = gate.gripper_phase_proposal(template(), dev)
+    assert proposal['state'] == 'revision_proposed'
+    assert proposal['patch']['evidence_ids'] == [value['trial_id']]
+    assert 'not an accepted revision' in proposal['patch']['reason']
+    value['actual_constraint_pass'] = False
+    assert gate.gripper_phase_proposal(template(), gate.development_summary([value])) is None
+    value['actual_constraint_pass'] = True; value['family'] = 'unreviewed_grip_code'
+    assert gate.gripper_phase_proposal(template(), gate.development_summary([value])) is None
 
 
 def test_physical_margins_do_not_change_penalty_scale():
