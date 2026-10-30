@@ -153,9 +153,15 @@ def synthetic_complete(output):
         receipt=clock(trace,phase)
         events=[]
         events.append(dict(sequence=0,kind='sample',**receipt['samples'][0]))
-        events.extend(dict(sequence=i,kind='backend_complete',physics_step_completed=i) for i in range(1,11))
-        events.append(dict(sequence=11,kind='sample',**receipt['samples'][1]))
-        receipt.update(event_count=len(events),events_sha256=d.json_hash(events),completed_physics_steps=10)
+        for i in range(1,11):
+            events.append(dict(sequence=len(events),kind='backend_begin',call_id=i,physics_step_completed=i-1))
+            events.append(dict(sequence=len(events),kind='backend_complete',call_id=i,physics_step_completed=i))
+        events.append(dict(sequence=len(events),kind='sample',**receipt['samples'][1]))
+        receipt.update(event_count=len(events),events_sha256=d.json_hash(events),completed_physics_steps=10,
+                       started_backend_steps=10,failed_backend_steps=0,runtime_dt_before=.004,runtime_dt_after=.004,
+                       simulated_seconds=.04,source_scope=dict(passed=True,files={'fixture':'sha'},findings=[]),
+                       errors=[],observed_code_sources={'fixture':'sha'},initial_other_python_threads=[],
+                       control_arguments_complete=True)
         d.atomic_json(output/(name+'_clock.json'),receipt)
         (output/(name+'_events.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in events))
         clocks.append(receipt)
@@ -172,7 +178,8 @@ def test_complete_output_recomputed_not_just_status(tmp_path):
     assert result['status']=='diagnostic_complete' and not result['acceptance_ready']
 
 
-@pytest.mark.parametrize('tamper',['orphan','bytes','counter_rehash','native_failure_rehash','sample_index_rehash'])
+@pytest.mark.parametrize('tamper',['orphan','bytes','counter_rehash','native_failure_rehash','sample_index_rehash',
+                                  'errors_rehash','dt_rehash','failed_rehash','thread_rehash','sample_time_rehash'])
 def test_verify_rejects_tampering_even_if_index_rebuilt(tmp_path,tamper):
     synthetic_complete(tmp_path)
     if tamper=='orphan':(tmp_path/'uncommitted_record.json').write_text('{}')
@@ -182,6 +189,11 @@ def test_verify_rejects_tampering_even_if_index_rebuilt(tmp_path,tamper):
         value=d.read(tmp_path/name)
         if tamper=='counter_rehash':value['completed_physics_steps']=11
         elif tamper=='native_failure_rehash':value['native_success']=False
-        else:value['samples'][1]['command_index']=0
+        elif tamper=='sample_index_rehash':value['samples'][1]['command_index']=0
+        elif tamper=='errors_rehash':value['errors']=['unobserved physics path']
+        elif tamper=='dt_rehash':value['runtime_dt_after']=.005
+        elif tamper=='failed_rehash':value['failed_backend_steps']=1
+        elif tamper=='thread_rehash':value['initial_other_python_threads']=[12345]
+        elif tamper=='sample_time_rehash':value['samples'][1]['simulated_seconds']=.08
         d.atomic_json(tmp_path/name,value);d.commit_index(tmp_path)
     with pytest.raises(ValueError):d.verify_output(tmp_path,'d'*64)

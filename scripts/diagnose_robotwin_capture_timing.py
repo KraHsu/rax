@@ -279,6 +279,32 @@ def commit_index(output):
     atomic_json(output/'artifact_index.json', dict(kind=KIND, files=files, **FLAGS))
 
 
+def clock_is_complete(value, events):
+    """Re-derive the observer's completion predicate; never trust its flags."""
+    begin = [e for e in events if e['kind']=='backend_begin']
+    done = [e for e in events if e['kind']=='backend_complete']
+    failed = [e for e in events if e['kind']=='backend_exception']
+    endings = done+failed
+    if ([e['call_id'] for e in begin] != list(range(1,len(begin)+1))
+            or sorted(e['call_id'] for e in endings) != list(range(1,len(begin)+1))
+            or any(e['sequence'] <= begin[e['call_id']-1]['sequence'] for e in endings)
+            or value['started_backend_steps'] != len(begin)
+            or value['failed_backend_steps'] != len(failed)
+            or value['completed_physics_steps'] != len(done)):
+        raise ValueError('Backend begin/terminal event accounting differs from receipt')
+    dt=value['runtime_dt_before']
+    if not isinstance(dt,(float,int)) or isinstance(dt,bool) or not np.isfinite(dt) or dt<=0:
+        raise ValueError('Invalid recorded physics timestep')
+    if (value['simulated_seconds'] != len(done)*dt
+            or any(s['simulated_seconds'] != s['physics_step_completed']*dt for s in value['samples'])):
+        raise ValueError('Recorded sample/phase simulation time does not match completed steps and dt')
+    scope=value['source_scope']
+    return bool(scope['passed'] and scope['files'] and not scope['findings'] and not value['errors']
+                and set(value['observed_code_sources']) <= set(scope['files'])
+                and not value['initial_other_python_threads'] and not failed
+                and len(begin)==len(done) and value['runtime_dt_after']==dt)
+
+
 def verify_output(output, expected_design_sha256):
     output = Path(output)
     index = read(output/'artifact_index.json')
@@ -316,6 +342,10 @@ def verify_output(output, expected_design_sha256):
         if len(sampled) != len(value['samples']) or any(
                 any(e.get(k) != v for k,v in s.items()) for e,s in zip(sampled,value['samples'])):
             raise ValueError('Clock samples changed: '+phase)
+        complete=clock_is_complete(value,events)
+        if (value['clock_complete'] is not complete
+                or value['timing_compatibility_ready'] is not (complete and value['control_arguments_complete'])):
+            raise ValueError('Clock completion flags disagree with derived evidence: '+phase)
     if state['status']=='diagnostic_complete':
         if state['native_episodes_started'] != 2 or set(clocks) != {'expert','replay'}:
             raise ValueError('A complete diagnostic requires both fixed episodes')
