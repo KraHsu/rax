@@ -45,6 +45,7 @@ Base types and parameter units:
 | axis_angle_interval | angle between EEF local axis and reference direction | local_axis, reference_axis, bounds in rad |
 | axis_displacement_interval | projected displacement from activation.start | axis, bounds in m |
 | angular_displacement_interval | rotation angle from activation.start | bounds in rad |
+| gripper_pair_max_interval | maximum of both absolute gripper opening fractions | bounds in [0,1]; subject both_grippers; schema 1.4 |
 | gripper_interval | absolute gripper command fraction, 0=closed and 1=open; not measured finger distance | bounds in [0,1] |
 | motion_direction_cone | violation distance of adjacent EEF displacement outside a forward cone | axis, half_angle_rad in (0,pi/2), bounds=[0,slack_m] |
 
@@ -118,3 +119,14 @@ For a disputed coupled failure, branch both continuations from the same saved
 post-grasp physics state and compare object/EEF relative geometry. Use the
 calibration checklist in `references/calibration-template.json` before proposing
 updated bounds. Extrema of successful points do not validate their box corners.
+
+
+The schema 1.4 joint gripper primitive uses the canonical identity frame and
+fixed interval activation only. It can express "at least one hand remains open"
+without separately requiring both to remain open. Existing constraints still
+combine by conjunction. The programmatic template's joint reference selector
+and audited pre-boundary migration are documented in
+`references/programmatic-template.md`; do not extend these labels into the
+both-closed holding segment or select their masks from generated commands.
+A positive lower angular bound has a known zero-gradient cusp at exact axis
+alignment; native set acceptance alone does not resolve that training limitation.

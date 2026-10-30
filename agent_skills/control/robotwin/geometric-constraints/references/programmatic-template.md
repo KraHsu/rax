@@ -41,6 +41,7 @@ patterns go back to RAX. Do not invent additional supported signatures.
 Every rule requires `id`, `type`, `subjects`, `selector`, `origin`, `orientation`,
 `parameters`, `rationale`. Optional `required` defaults true. `subjects` is
 `active_arms`, `left`, or `right`; prefer `active_arms` for symmetric arm variants.
+Only `gripper_pair_max_interval` instead requires `both_grippers`.
 Only use a fixed arm if supported by the task. A missing required selector fails
 the template; optional rules may have no matches.
 
@@ -49,7 +50,8 @@ Selectors and their EXACT fields:
 | selector | Fields | Activation |
 | --- | --- | --- |
 | events | `kind`, `direction`: decreasing/increasing/any, `occurrence`: first/last/all | genuine reference 0.5 crossing |
-| gripper_plateaus | `kind`, `state`: closed/open, `after`: episode_start/first_close/last_close | contiguous command=0/1 runs (atol 1e-6), at least 2 frames |
+| gripper_plateaus | `kind`, `state`: closed/open/all, `after`: episode_start/first_close/last_close | closed/open: command=0/1; all: stable run-first command including partial opening (atol 1e-6), at least 2 frames |
+| joint_gripper_plateaus | `kind`, `state`: before_joint_closed, `after`: episode_start | stable reference max-opening runs before the first stable common full closure; joint primitive only |
 | terminal | `kind` only | last reference frame |
 | position_extremum | `kind`, `axis`: unit world vector, `which`: min/max, `after`: episode_start/first_close/last_close | first extremum frame in the selected suffix |
 
@@ -70,6 +72,7 @@ constraint, never computed from predicted actions.
 | axis_displacement_interval | axis: unit vector |
 | angular_displacement_interval | empty object |
 | gripper_interval | empty object |
+| gripper_pair_max_interval | empty object; subject both_grippers and world/world frame |
 
 Displacement rules add `start_anchor`:
 `selection` (default), `first_close`, `last_close`, `episode_start`. Non-default
@@ -88,9 +91,11 @@ to template parameters: the executor sets it from each measured trajectory.
 The executor measures min/max over exactly the selected activation, then applies
 the established operator priors: position ±0.005 m, angle ±0.0872664626 rad,
 gripper ±0.02; distances/angles/gripper are clipped to their valid domains.
-Penalty is squared hinge with that margin as scale. These values are reference
-envelopes, NOT physical tolerance calibration. You cannot widen these priors in
-the template. Temporal coverage MUST include every action frame of both arms.
+Penalty is squared hinge with the default prior as scale. An explicit
+`allowed_margin: {lower, upper, unit}` may revise the physical allowance without
+changing that scale: units are `m`, `rad`, or `fraction` as appropriate. Such
+revisions require development evidence and fresh native acceptance; these
+values are reference envelopes, NOT physical tolerance calibration. Temporal coverage MUST include every action frame of both arms.
 This does not mean copying the demonstrated path: the executor automatically
 fills remaining position/motion gaps with `motion_direction_cone` for movement
 and a loose stationary hold region. Moving intervals allow a 60-degree half-angle
@@ -132,3 +137,21 @@ position target. All branch choices use reference data and validity masks only.
 These are uncalibrated motion priors, not physical success bounds. Old stored
 `motion_direction_cone` labels retain their schema 1.1/1.2 semantics. Neither
 direction kind is selected directly by a task template; the executor adds it.
+
+
+Schema 1.4 adds the joint max-opening primitive. Its measured scalar is
+`max(left_gripper, right_gripper)` with fraction bounds. Both physical grip
+channels must be valid; the fixed activation does not depend on predictions.
+The selector stops before the first reference pair of consecutive frames with
+both commands within `1e-6` of zero. Earlier max-opening plateaus stay within
+`1e-6` of their first value for at least two frames. One hand may ramp while the
+other maintains the maximum. Absence of this boundary requires review.
+
+To replace conflicting independent pre-closure rules, use the audited
+`replace_pregrasp_gripper_with_pair` refinement operation, not a broad global
+margin increase. It preserves each original all-plateau rule after that common
+reference boundary (`reference_phase: after_joint_closed`), retains existing
+fully-closed rules, and checks that every removed action frame is covered by an
+effective joint interval. Cite success and failure development evidence. The
+result remains a proposal until independent native validation; no union/max
+rule is automatically a physical success certificate.
