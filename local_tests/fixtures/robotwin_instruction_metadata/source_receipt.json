@@ -1,0 +1,21 @@
+{
+  "native_commit": "0008ae6800df9f75fc8de7098bacb01735fd8fd2",
+  "files": {
+    "blocks_ranking_size.py": {
+      "native_path": "envs/blocks_ranking_size.py",
+      "sha256": "0517ae78933baa225aa09e4db3ce2004538c9c6873c584d4044b29b2f509581c"
+    },
+    "place_bread_basket.py": {
+      "native_path": "envs/place_bread_basket.py",
+      "sha256": "3751aa10c991f638be145f7536c9e1e398b1e116ba81f207dd4a11a6ae6a99ab"
+    },
+    "blocks_ranking_size.json": {
+      "native_path": "description/task_instruction/blocks_ranking_size.json",
+      "sha256": "4ad638c230b384a1dab3e89a0f2b6f22b642ca6d78783737bbdfec6024cb47e0"
+    },
+    "place_bread_basket.json": {
+      "native_path": "description/task_instruction/place_bread_basket.json",
+      "sha256": "5c15c295a24599e674bbc8659f9c0ab30de6f5e9cc186852c5a7d230393ce48c"
+    }
+  }
+}
