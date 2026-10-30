@@ -176,14 +176,14 @@ def export_review(episode, output):
     return metadata
 
 
-def embed_review(episode, proposal, *, agent_run):
+def embed_review(episode, proposal, *, agent_run, reference_template=None):
     episode = Path(episode).resolve()
     with episode.with_name('.'+episode.name+'.annotation.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return _embed_review(episode, proposal, agent_run=agent_run)
+        return _embed_review(episode, proposal, agent_run=agent_run, reference_template=reference_template)
 
 
-def _embed_review(episode, proposal, *, agent_run):
+def _embed_review(episode, proposal, *, agent_run, reference_template=None):
     import h5py
     episode = Path(episode)
     if set(proposal) != {'source_sha256', 'constraints'}:
@@ -194,11 +194,24 @@ def _embed_review(episode, proposal, *, agent_run):
         bundle = read_embedded(h)
         if bundle is None or bundle['provenance'].get('native_success') is not True:
             raise ValueError('Only successful clean training recordings may be annotated')
+        role_audit = None
+        if reference_template is not None:
+            # Recompute under the same source lock. Callers cannot supply a
+            # role->arm mapping or an unverified provenance claim.
+            from services.robotwin.programmatic_annotation import instantiate, template_hash
+            compiled, programmatic_audit = instantiate(h, reference_template)
+            if template_hash(compiled) != template_hash(proposal['constraints']):
+                raise ValueError('Proposal differs from the fixed reference template')
+            if 'reference_roles' in programmatic_audit:
+                role_audit = {key: programmatic_audit[key] for key in ('template_sha256', 'reference_roles')}
         bundle = copy.deepcopy(bundle); bundle['constraints'] = proposal['constraints']; bundle['schema_version'] = SCHEMA_VERSION
         validate_bundle(bundle, len(h['endpose/left_endpose']))
         validate_reference_events(bundle, h)
         from services.robotwin.full_trajectory import complete_constraints
-        bundle['constraints'], coverage = complete_constraints(h, bundle['constraints'], bundle['provenance']['recording_id'])
+        bundle['constraints'], coverage = complete_constraints(h, bundle['constraints'], bundle['provenance']['recording_id'],
+                                                               policy=reference_template.get('coverage_policy') if reference_template is not None else None)
+        if reference_template is not None and template_hash(bundle['constraints']) != template_hash(compiled):
+            raise ValueError('Embedded constraints differ from the fixed reference compilation')
         validate_bundle(bundle, len(h['endpose/left_endpose']))
         audit = validate_reference_bounds(bundle, h)
     temporary = episode.with_name('.'+episode.name+'.annotating-'+uuid.uuid4().hex)
@@ -209,7 +222,8 @@ def _embed_review(episode, proposal, *, agent_run):
             revision = int(h['trajectory_constraints'].attrs['revision'])+1
             history.append({'revision': revision, 'agent_run': str(agent_run),
                             'source_sha256': proposal['source_sha256'], 'constraints': bundle['constraints'],
-                            'reference_audit': audit, 'coverage': coverage})
+                            'reference_audit': audit, 'coverage': coverage,
+                            **({'programmatic_audit': role_audit} if role_audit is not None else {})})
             h[HDF5_KEY][()] = canonical_json(bundle)
             h['trajectory_constraints/history'][()] = json.dumps(history, ensure_ascii=False)
             h['trajectory_constraints'].attrs['revision'] = revision

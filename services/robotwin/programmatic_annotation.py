@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 
 import numpy as np
 
@@ -48,8 +49,70 @@ def template_hash(template):
     return hashlib.sha256(json.dumps(template, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
+def validate_reference_roles(declarations):
+    """Template-side roles; no role token survives into the action-loss schema."""
+    if not isinstance(declarations, list) or not 1 <= len(declarations) <= 2:
+        raise ValueError('reference_roles requires one or two explicit declarations')
+    names = set()
+    for declaration in declarations:
+        keys(declaration, ('role', 'source', 'event_signature', 'rationale'))
+        name = declaration['role']
+        if (not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', name)
+                or name in names):
+            raise ValueError('Reference role names must be unique stable identifiers')
+        names.add(name)
+        if declaration['source'] != 'reference_event_signature':
+            raise ValueError('Role source must be a fixed reference event signature')
+        signature = declaration['event_signature']
+        events = signature.split(',') if isinstance(signature, str) else []
+        if (not 1 <= len(events) <= 32 or any(e not in ('close', 'open') for e in events)
+                or any(a == b for a, b in zip(events, events[1:]))):
+            raise ValueError('Role event signature must be a nonempty alternating close/open sequence')
+        if not isinstance(declaration['rationale'], str) or not declaration['rationale'].strip():
+            raise ValueError('Explain the native/reference basis for a role')
+    return names
+
+
+def resolve_reference_roles(template, bundle, arms, meta):
+    """Bind once from the successful recording; ambiguity is a review blocker.
+
+    The hash covers the decoded reference arrays, action contract and recording
+    identity. It is not the HDF5 byte hash (which changes upon annotation).
+    Generated trajectories are never an input to this function.
+    """
+    declarations = template.get('reference_roles')
+    if declarations is None:
+        return {}, None
+    observed = {arm: ','.join('close' if e['direction'] == 'decreasing' else 'open'
+                             for e in data['events']) for arm, data in arms.items()}
+    bindings = {}
+    for declaration in declarations:
+        matches = [arm for arm, data in arms.items() if data['active']
+                   and observed[arm] == declaration['event_signature']]
+        if len(matches) != 1:
+            raise OutsideTemplate(f'Reference role {declaration["role"]} needs exactly one active arm; found {matches}')
+        arm = matches[0]
+        if arm in bindings.values():
+            raise OutsideTemplate('Multiple reference roles bind the same arm')
+        bindings[declaration['role']] = arm
+    source = dict(action_contract=bundle['action_contract'],
+                  recording_id=bundle['provenance']['recording_id'], expert_provenance=meta,
+                  arms={arm: dict(pose=data['pose'].tolist(), gripper=data['grip'].tolist())
+                        for arm, data in arms.items()})
+    audit = dict(version=1, source='fixed_successful_reference',
+                 declarations=copy.deepcopy(declarations), declarations_sha256=template_hash(declarations),
+                 reference_sha256=template_hash(source),
+                 reference_hash_format='canonical_json_decoded_pose_gripper_contract_recording_expert_v1',
+                 recording_id=source['recording_id'], expert_provenance=copy.deepcopy(meta),
+                 observed_arms={arm: dict(active=data['active'], event_signature=observed[arm],
+                                         events=copy.deepcopy(data['events'])) for arm, data in arms.items()},
+                 bindings=bindings, generated_actions_used=False)
+    return bindings, audit
+
+
 def validate_template(t):
-    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'), ('coverage_policy',))
+    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'), ('coverage_policy', 'reference_roles'))
+    role_names = validate_reference_roles(t['reference_roles']) if 'reference_roles' in t else set()
     if 'coverage_policy' in t:
         validate_coverage_policy(t['coverage_policy'])
     if (type(t['version']) is not int or t['version'] != 1 or not isinstance(t['task'], str) or not t['task']
@@ -73,7 +136,9 @@ def validate_template(t):
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
-        if r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone') or r['subjects'] not in ('active_arms', 'left', 'right', 'both_grippers'):
+        subjects = {'active_arms', 'left', 'right', 'both_grippers'} | {'role:'+name for name in role_names}
+        if (r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone')
+                or not isinstance(r['subjects'], str) or r['subjects'] not in subjects):
             raise ValueError('Unsupported primitive or subject')
         if (r['subjects'] == 'both_grippers') != (r['type'] == 'gripper_pair_max_interval'):
             raise ValueError('Pair max requires exactly both_grippers')
@@ -229,12 +294,15 @@ def instantiate(handle, template):
     meta = json.loads(handle.attrs['robotwin_expert_provenance'])
     if meta['task'] != template['task']: raise OutsideTemplate('Task mismatch')
     if signature not in template['signatures']: raise OutsideTemplate(f'Unreviewed event signature: {signature}')
+    role_bindings, role_audit = resolve_reference_roles(template, bundle, arms, meta)
     constraints = []; thash = template_hash(template)
     uses_joint = any(r['type'] == 'gripper_pair_max_interval' or 'reference_phase' in r for r in template['rules'])
     joint_windows, joint_audit = joint_gripper_windows(arms) if uses_joint else ([], None)
     removed = []; retained = []
     for rule in template['rules']:
         subjects = [a for a in arms if arms[a]['active']] if rule['subjects'] == 'active_arms' else [rule['subjects']]
+        if rule['subjects'].startswith('role:'):
+            subjects = [role_bindings[rule['subjects'][5:]]]
         selected_count = 0
         for subject in subjects:
             pair = rule['type'] == 'gripper_pair_max_interval'
@@ -280,6 +348,10 @@ def instantiate(handle, template):
                                       + rule['rationale'] + ' Bounds are recomputed from this reference with explicit operator margins; '
                                       'not a physically calibrated feasible region or proof of contact/grasp/support. '
                                       'Displacement requires its original start anchor in the training chunk.'}}
+                if rule['subjects'].startswith('role:'):
+                    c['evidence']['rationale'] += (f' Fixed reference role {rule["subjects"][5:]} -> {subject}; '
+                        f'reference_sha256={role_audit["reference_sha256"]}; '
+                        f'declarations_sha256={role_audit["declarations_sha256"]}.')
                 # Preserve the original platform's numerical set when clipping
                 # its activation, including tiny within-epsilon reference drift.
                 original_activation = c['activation']
@@ -312,6 +384,7 @@ def instantiate(handle, template):
     audit = validate_reference_bounds(generated, handle)
     return constraints, {'template_sha256': thash, 'signature': signature, 'policy': POLICY,
                          'reference_audit': audit, 'coverage': coverage,
+                         **({'reference_roles': role_audit} if role_audit is not None else {}),
                          **({'joint_gripper_reference': joint_audit} if uses_joint else {})}
 
 

@@ -320,7 +320,8 @@ def publish(source_root, registry_root, output, *, require_refinement=False):
                 if entry['acceptance']['report_sha256'] != plan['template_reports'][source['report_key']]['report_sha256']:
                     raise ValueError('Acceptance proof changed after planning')
                 result = embed_review(destination, dict(source_sha256=source['source_sha256'], constraints=constraints),
-                                      agent_run='acceptance-v2:'+source['template_sha256'])
+                                      agent_run='acceptance-v2:'+source['template_sha256'],
+                                      reference_template=entry['template'])
                 proof = episode_proof(plan, source)
                 with h5py.File(destination, 'r+') as handle:
                     if PROOF_KEY in handle:

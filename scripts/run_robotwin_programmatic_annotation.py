@@ -40,7 +40,8 @@ def run_once(root):
             # Numeric work has finished before hashing/copying images; keep the
             # same checked, atomic publication path as the agent workflow.
             proposal = {'source_sha256': digest(episode), 'constraints': constraints}
-            result = complete(path, job, proposal, 'template:'+audit['template_sha256'])
+            result = complete(path, job, proposal, 'template:'+audit['template_sha256'],
+                              reference_template=entry['template'])
             result.update(task=receipt['task'], index=receipt['index'], seconds=time.perf_counter()-start,
                           template_sha256=audit['template_sha256'])
             with (root/'programmatic_publications.jsonl').open('a') as stream:

@@ -56,7 +56,7 @@ def claim(root,worker):
             'complete':done==manifest['total_target']}
 
 
-def complete(receipt_path,claim_id,proposal,agent_run,template=None):
+def complete(receipt_path,claim_id,proposal,agent_run,template=None,*,reference_template=None):
     receipt_path=Path(receipt_path);receipt=json.loads(receipt_path.read_text())
     if receipt.get('claim_id')!=claim_id or receipt['annotation_status']!='processing':raise ValueError('Stale annotation lease')
     if not any(c.get('evidence',{}).get('status')=='accepted' for c in proposal.get('constraints',[])):
@@ -67,7 +67,7 @@ def complete(receipt_path,claim_id,proposal,agent_run,template=None):
     control_path = root/'annotation_control.json'
     control = json.loads(control_path.read_text()) if control_path.exists() else {}
     acceptance_proof = None
-    if control.get('acceptance_version') == 2:
+    if control.get('acceptance_version') == 2 or reference_template is not None:
         # New publication cannot bypass the counterfactual gate through an
         # individually reviewed proposal. Bootstrap reviews stay in raw/.
         from services.robotwin.annotation_templates import match
@@ -77,10 +77,13 @@ def complete(receipt_path,claim_id,proposal,agent_run,template=None):
         if matched is None:
             raise ValueError('Counterfactual acceptance required; keep bootstrap reference in raw/reviews')
         entry, accepted_constraints, _ = matched
+        if reference_template is not None and template_hash(reference_template) != template_hash(entry['template']):
+            raise ValueError('Reference template differs from the counterfactually accepted template')
         if json_hash(proposal['constraints']) != json_hash(accepted_constraints):
             raise ValueError('Proposal differs from the counterfactually accepted template')
         acceptance_proof = dict(entry['acceptance'], template_sha256=template_hash(entry['template']))
-    result=embed_review(episode,proposal,agent_run=agent_run)
+        reference_template = entry['template']
+    result=embed_review(episode,proposal,agent_run=agent_run,reference_template=reference_template)
     if result['accepted']<1:raise ValueError('Annotation did not pass reference validation')
     if acceptance_proof is not None:
         import h5py
