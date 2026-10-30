@@ -77,3 +77,14 @@ strict origin-height dtype/boundary equivalence, fresh-instance lifecycle,
 instruction immutability, physical-state invariance, source drift, receipt
 tampering, and the no-resampling error path. Separate native-Python CPU probes
 exercise real SAPIEN entities/components without creating a Scene or renderer.
+
+For the first native factory smoke, the validator supports the explicit
+`--case-preset baseline_smoke` for these two tasks only. It requires `--seeds 1`,
+`--max-seed-attempts 1` and `--baseline-repeats 2`: one fixed seed, one reference
+attempt, and at most two baseline replays. The second replay runs only if the
+first passes the existing baseline gate. Reference failures retain their initial
+scene, initialization receipt and sampled actions in `reference_attempts`; no
+replacement seed or automatic resume is permitted. A new smoke output must use
+a separately reviewed plan. Default fixed-case validation retains its 18 cases.
+Neither a captured reference nor a completed baseline pair certifies constraint
+tolerances or dataset publication.

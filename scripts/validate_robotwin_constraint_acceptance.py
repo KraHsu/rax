@@ -112,28 +112,38 @@ def reference_bundle(template, trajectory, seed, fingerprint):
     return bundle, audit
 
 
-def capture_reference(factory, template, seed, excluded_scenes):
+def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None):
     from scripts.collect_robotwin_clean50 import play_expert
-    native = factory(seed)
+    native = None
     started = time.monotonic()
+    samples = []
+    attempt = dict(task=template['task'], seed=seed, status='started', native_success=None,
+                   purpose='reference_capture_diagnostic_not_acceptance', native_actions_executed=False)
     try:
+        native = factory(seed)
+        scene = initial_scene(native)
+        fingerprint = scene_fingerprint(scene)
+        attempt.update(initial_scene=scene, scene_sha256=fingerprint,
+                       success_metadata=getattr(native, MARKER, None))
         try:
             adapter = install_base_frame_adapter(native, install=False)
         except Exception as exc:
             raise ReplayAdapterError(f'Unsupported replay robot/assets: {exc}') from exc
-        scene = initial_scene(native)
-        fingerprint = scene_fingerprint(scene)
         if fingerprint in excluded_scenes:
             raise ValueError('Held-out scene duplicates a training scene')
         samples = [sample(native)]
         native._take_picture = lambda *args, **kwargs: samples.append(sample(native))
+        attempt['native_actions_executed'] = True
         play_expert(native)
         samples.append(sample(native))
-        if not native.plan_success or not native.check_success():
+        attempt['planner_success'] = bool(native.plan_success)
+        attempt['native_success'] = bool(native.check_success()) if native.plan_success else None
+        if not attempt['planner_success'] or not attempt['native_success']:
             raise ValueError('Reference native expert did not succeed')
         trajectory = samples_to_trajectory(samples)
         bundle, audit = reference_bundle(template, trajectory, seed, fingerprint)
         source_hash = json_digest(dict(scene=scene, trajectory=trajectory))
+        attempt['status'] = 'reference_captured'
         return dict(bundle=bundle, trajectory=trajectory, template_audit=audit, initial_scene=scene,
                     **({'success_metadata': getattr(native, MARKER)} if hasattr(native, MARKER) else {}),
                     replay_adapter=adapter, replay_adapter_applied=False,
@@ -141,8 +151,30 @@ def capture_reference(factory, template, seed, excluded_scenes):
                                     mode='demo_clean', split='validation', source_episode_sha256=source_hash,
                                     recording_method='native_expert_save_freq_trace_no_images'),
                     capture_seconds=time.monotonic()-started)
+    except BaseException as exc:
+        attempt.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+        raise
     finally:
-        native.close_env()
+        try:
+            if native is not None:
+                native.close_env()
+        except BaseException as exc:
+            attempt.update(status='failed', cleanup_error=f'{type(exc).__name__}: {exc}')
+            raise
+        finally:
+            if attempt_path is not None:
+                attempt.update(seconds=time.monotonic()-started, samples=samples)
+                bind(attempt_path, attempt)
+
+
+def selected_cases(args, task):
+    preset = getattr(args, 'case_preset', 'fixed_cases')
+    if preset == 'fixed_cases':
+        return default_cases()
+    if (preset != 'baseline_smoke' or task not in ('open_laptop', 'put_object_cabinet')
+            or (args.seeds, args.max_seed_attempts, args.baseline_repeats) != (1, 1, 2)):
+        raise ValueError('Metadata smoke requires one fixed scene, one capture attempt and at most two conditional baselines')
+    return []
 
 
 def planned_trials(references, baseline_repeats, cases):
@@ -262,6 +294,7 @@ def run(args):
     from services.robotwin.collection import install_planner_cache
 
     template = load_template(args.template)
+    cases = selected_cases(args, template['task'])
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     exclusions = training_exclusions(args.training_root)
     native_revision = source_commit()
@@ -270,16 +303,22 @@ def run(args):
     config = dict(task=template['task'], template_sha256=template_hash(template),
                   annotation_policy_sha256=annotation_policy_fingerprint(), native_commit=native_revision,
                   seed_start=args.seed_start, seeds=args.seeds, max_seed_attempts=args.max_seed_attempts,
-                  baseline_repeats=args.baseline_repeats, cases=default_cases(), tracking=TRACKING,
+                  baseline_repeats=args.baseline_repeats, cases=cases, tracking=TRACKING,
                   driver_sha256=digest(__file__), replay_sha256=digest(ROOT/'services/robotwin/acceptance_replay.py'),
                   exclusions_sha256=json_digest(exclusions), alignment=ALIGNMENT, native_success_rule=SUCCESS_RULE)
     config['replay_adapter_version'] = BASE_FRAME_ADAPTER
+    if getattr(args, 'case_preset', 'fixed_cases') == 'baseline_smoke':
+        if args.seed_start in exclusions['excluded_training_seeds']:
+            raise ValueError('Fixed metadata smoke seed overlaps training; do not choose another seed')
+        config['case_preset'] = 'baseline_smoke'
     if metadata_policy(template['task']) is not None:
         config['success_metadata_policy'] = metadata_policy(template['task'])
     bind(output/'configuration.json', config)
     if args.check_only:
-        print(json.dumps(dict(check='passed', gpu_started=False, trials_per_seed=args.baseline_repeats+len(default_cases()))))
+        print(json.dumps(dict(check='passed', gpu_started=False, trials_per_seed=args.baseline_repeats+len(cases))))
         return 0
+    if config.get('case_preset') == 'baseline_smoke' and (output/'run.json').exists():
+        raise ValueError('Metadata smoke attempts are immutable; review failures in a new explicit plan')
     lock = (output/'.runner.lock').open('a')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     run_state = dict(status='initializing', started_unix=time.time(), task=template['task'])
@@ -334,7 +373,11 @@ def run(args):
                     if path.exists():
                         reference = json.loads(path.read_text())
                     else:
-                        reference = capture_reference(factory, template, seed, scenes)
+                        if config.get('case_preset') == 'baseline_smoke':
+                            reference = capture_reference(factory, template, seed, scenes,
+                                                          attempt_path=output/'reference_attempts'/f'seed{seed}.json')
+                        else:
+                            reference = capture_reference(factory, template, seed, scenes)
                         atomic_json(path, reference)
                     fingerprint = reference['provenance']['scene_sha256']
                     if fingerprint in scenes:
@@ -361,6 +404,8 @@ def run(args):
                                                  for seed, path in references.items()])
             if 'success_metadata_policy' in config:
                 manifest['success_metadata_policy'] = config['success_metadata_policy']
+            if config.get('case_preset') == 'baseline_smoke':
+                manifest['purpose'] = 'native_metadata_smoke_not_acceptance'
             bind(manifest_path, manifest)
         validate_manifest(manifest)
         verify_plan(manifest, config, exclusions, template, output)
@@ -411,6 +456,7 @@ def main():
     parser.add_argument('--seeds', default=3, type=int)
     parser.add_argument('--baseline-repeats', default=2, type=int)
     parser.add_argument('--max-seed-attempts', default=30, type=int)
+    parser.add_argument('--case-preset', choices=('fixed_cases', 'baseline_smoke'), default='fixed_cases')
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
     if args.seed_start < 0 or not 1 <= args.seeds <= 10 or args.baseline_repeats < 2 or args.max_seed_attempts < args.seeds:
