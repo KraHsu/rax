@@ -262,6 +262,7 @@ def propose_revision(parent, patch, development, *, protocol=None):
         raise ValueError('A nonempty whitelisted revision is required')
     revised = copy.deepcopy(parent)
     coverage_edit = False
+    motion_edit = False
     for op in patch['operations']:
         if not isinstance(op, dict):
             raise ValueError('Only data-only revision operations are allowed')
@@ -281,6 +282,26 @@ def propose_revision(parent, patch, development, *, protocol=None):
                 matches[0]['reference_phase'] = 'after_joint_closed'
             revised['rules'].append(joint)
             validate_template(revised)
+            continue
+        if op.get('op') == 'set_motion_coverage':
+            if set(op) != {'op', 'policy'} or motion_edit or not isinstance(op['policy'], dict):
+                raise ValueError('Motion composition requires one explicit independently audited migration')
+            from services.robotwin.full_trajectory import MOTION_EXEMPT_TYPES, validate_motion_coverage
+            validate_motion_coverage(op['policy'], task=parent['task'], rules=revised['rules'])
+            exemptions = op['policy']['exemptions']
+            migrations = [e for e in exemptions if e['provenance']['source'] == 'template_migration']
+            if migrations:
+                expected_ids = {r['id'] for r in parent['rules'] if r['type'] in MOTION_EXEMPT_TYPES}
+                parent_types = {r['id']:r['type'] for r in parent['rules']}
+                if (len(migrations) != len(exemptions)
+                        or parent.get('motion_coverage', {}).get('mode', 'legacy_position_override') != 'legacy_position_override'
+                        or {e['rule_id'] for e in exemptions} != expected_ids
+                        or any(e['provenance']['sha256'] != template_hash(parent)
+                               or e['primitive'] != parent_types.get(e['rule_id']) for e in exemptions)):
+                    raise ValueError('Motion template migration must bind all original replacement-rule identities and the actual legacy parent hash')
+            revised['motion_coverage'] = copy.deepcopy(op['policy'])
+            validate_template(revised)
+            motion_edit = True
             continue
         if op.get('op') == 'set_coverage_policy':
             if set(op) != {'op', 'policy'} or coverage_edit or not isinstance(op['policy'], dict):

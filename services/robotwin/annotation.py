@@ -210,6 +210,13 @@ def _embed_review(episode, proposal, *, agent_run, reference_template=None):
         bundle = read_embedded(h)
         if bundle is None or bundle['provenance'].get('native_success') is not True:
             raise ValueError('Only successful clean training recordings may be annotated')
+        previous_coverage = json.loads(h['trajectory_constraints/coverage'][()]) if 'trajectory_constraints/coverage' in h else {}
+        if not previous_coverage:
+            previous_history = json.loads(h['trajectory_constraints/history'][()])
+            previous_coverage = previous_history[-1].get('coverage', {}) if previous_history else {}
+        previous_mode = previous_coverage.get('motion_composition', {}).get('policy', {}).get('mode')
+        if previous_mode == 'independent' and (reference_template is None or 'motion_coverage' not in reference_template):
+            raise ValueError('Independent motion coverage requires an explicit reference template; no silent legacy downgrade')
         role_audit = None
         if reference_template is not None:
             # Recompute under the same source lock. Callers cannot supply a
@@ -225,7 +232,9 @@ def _embed_review(episode, proposal, *, agent_run, reference_template=None):
         validate_reference_events(bundle, h)
         from services.robotwin.full_trajectory import complete_constraints
         bundle['constraints'], coverage = complete_constraints(h, bundle['constraints'], bundle['provenance']['recording_id'],
-                                                               policy=reference_template.get('coverage_policy') if reference_template is not None else None)
+                                                               policy=reference_template.get('coverage_policy') if reference_template is not None else None,
+                                                               motion_coverage=reference_template.get('motion_coverage') if reference_template is not None else None,
+                                                               task=reference_template['task'] if reference_template is not None else None)
         if reference_template is not None and template_hash(bundle['constraints']) != template_hash(compiled):
             raise ValueError('Embedded constraints differ from the fixed reference compilation')
         validate_bundle(bundle, len(h['endpose/left_endpose']))

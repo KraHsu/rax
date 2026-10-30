@@ -6,11 +6,12 @@ precedence; rotations and gripper features are never invented just for coverage.
 """
 import copy
 import math
+import re
 
 import numpy as np
 
 from services.robotwin.annotation import constraint_positions
-from services.robotwin.constraint_coverage import coverage_masks, coverage_report, runs
+from services.robotwin.constraint_coverage import POSITION, coverage_masks, coverage_report, runs
 
 PREFIX = '__full_motion_v2__'
 LEGACY_PREFIX = '__full_motion_v1__'
@@ -24,6 +25,75 @@ POLICY = {'version': 3, 'objective': 'window_direction_with_segment_region_fallb
 COVERAGE_POLICY_BOUNDS = {'half_angle_rad': (math.radians(5), math.radians(85)),
                           'hold_margin_m': (.001, .1), 'direction_slack_m': (0., .05)}
 PENALTY_SCALES_M = {'stationary': .02, 'direction': .005}
+MOTION_EXEMPT_TYPES = POSITION | {'axis_displacement_interval'}
+
+
+def validate_motion_coverage(value, *, task, rules=None):
+    """Explicit composition policy, separate from numerical tolerance tuning."""
+    if (not isinstance(value, dict) or set(value) != {'version', 'task', 'mode', 'exemptions', 'rationale'}
+            or type(value['version']) is not int or value['version'] != 1
+            or not isinstance(task, str) or not task or value['task'] != task
+            or value['mode'] not in ('independent', 'legacy_position_override')
+            or not isinstance(value['rationale'], str) or not value['rationale'].strip()
+            or not isinstance(value['exemptions'], list) or len(value['exemptions']) > 24):
+        raise ValueError('Invalid motion_coverage policy or task context')
+    if value['mode'] == 'legacy_position_override' and value['exemptions']:
+        raise ValueError('Legacy motion_coverage has no selective exemptions')
+    seen = set()
+    for e in value['exemptions']:
+        if (not isinstance(e, dict) or set(e) != {'rule_id', 'primitive', 'rationale', 'provenance'}
+                or not isinstance(e['rule_id'], str) or not e['rule_id']
+                or e['rule_id'].startswith((PREFIX, LEGACY_PREFIX)) or e['rule_id'] in seen
+                or not isinstance(e['primitive'], str) or e['primitive'] not in MOTION_EXEMPT_TYPES
+                or not isinstance(e['rationale'], str) or not e['rationale'].strip()):
+            raise ValueError('motion_coverage exemptions require unique explicit template rule identities and reasons')
+        source = e['provenance']
+        if (not isinstance(source, dict) or set(source) != {'source', 'reference', 'sha256'}
+                or source['source'] not in ('template_migration', 'manual_review')
+                or not isinstance(source['reference'], str) or not source['reference'].strip()
+                or not isinstance(source['sha256'], str) or re.fullmatch('[0-9a-f]{64}', source['sha256']) is None):
+            raise ValueError('motion_coverage exemption provenance is missing or invalid')
+        seen.add(e['rule_id'])
+    if rules is not None:
+        by_id = {r['id']:r for r in rules}
+        for e in value['exemptions']:
+            if e['rule_id'] not in by_id or by_id[e['rule_id']]['type'] != e['primitive']:
+                raise ValueError('motion_coverage exemption must bind an existing position/motion rule identity and primitive in this task')
+    return value
+
+
+def motion_exemptions(constraints, policy, length):
+    """Resolve stable template IDs to exact compiled IDs, never frame allowlists."""
+    selected, audit = [], []
+    for entry in policy['exemptions']:
+        pattern = re.compile(re.escape(entry['rule_id'])+r'_(left|right)_([0-9]+)_([0-9]+)')
+        matches = []
+        for c in constraints:
+            match = pattern.fullmatch(c['id'])
+            if match is None:
+                continue
+            lo, hi = map(int, match.group(2,3))
+            a = c['activation']
+            expected_lo = a.get('event', {}).get('frame', a['start'])
+            # Displacement can retain a prior anchor before the selected frame;
+            # other exemptions must encode their exact reference selection.
+            if (c['id'] != f'{entry["rule_id"]}_{match[1]}_{lo}_{hi}'
+                    or c['subject'] != match[1]+'_eef' or c['type'] != entry['primitive']
+                    or c['evidence']['status'] != 'accepted' or hi != a['end']-1
+                    or (c['type'] != 'axis_displacement_interval' and lo != expected_lo)
+                    or (c['type'] == 'axis_displacement_interval' and not a['start'] <= lo <= hi)):
+                raise ValueError('motion_coverage compiled rule identity/subject/activation is inconsistent')
+            matches.append(c)
+        if not matches:
+            raise ValueError('motion_coverage exemption has no compiled reference selection: '+entry['rule_id'])
+        selected.extend(matches)
+        masks = coverage_masks(matches, length)
+        audit.append(dict(entry, compiled_constraints=[dict(id=c['id'], subject=c['subject'],
+                          type=c['type'], activation=copy.deepcopy(c['activation']),
+                          parameters=copy.deepcopy(c['parameters'])) for c in matches],
+                          effective_reference_spans={arm:list(runs(masks[arm]['position_or_motion'], value=True))
+                                                     for arm in ('left','right')}))
+    return selected, audit
 
 
 def validate_coverage_policy(override):
@@ -45,7 +115,7 @@ def resolve_coverage_policy(override=None):
     return policy
 
 
-def complete_constraints(handle, constraints, recording_id, *, policy=None):
+def complete_constraints(handle, constraints, recording_id, *, policy=None, motion_coverage=None, task=None):
     override = copy.deepcopy(policy)
     policy = resolve_coverage_policy(override)
     result = [copy.deepcopy(c) for c in constraints if not c['id'].startswith((PREFIX, LEGACY_PREFIX))]
@@ -71,7 +141,14 @@ def complete_constraints(handle, constraints, recording_id, *, policy=None):
             f'{a["start"]}, stored in reference_frame, because its {span}-step span exceeds the 32-action chunk. '
             'This overrides the preceding predicted-start masking rule: it constrains displacement from that '
             'measured reference pose, not from an unobserved generated pose. Bounds and evaluation event are unchanged.')
-    masks = coverage_masks(result, length)
+    composition = copy.deepcopy(motion_coverage)
+    if composition is not None:
+        validate_motion_coverage(composition, task=task)
+    exemptions = []
+    coverage_inputs = result
+    if composition is not None and composition['mode'] == 'independent':
+        coverage_inputs, exemptions = motion_exemptions(result, composition, length)
+    masks = coverage_masks(coverage_inputs, length)
     for arm in ('left', 'right'):
         positions = np.asarray(handle[f'endpose/{arm}_endpose'], dtype=float)[:, :3]
         if positions.shape != (length, 3) or not np.isfinite(positions).all():
@@ -135,6 +212,18 @@ def complete_constraints(handle, constraints, recording_id, *, policy=None):
     report = coverage_report(result, length)
     if not report['complete']: raise ValueError('Full motion coverage failed')
     report['policy'] = policy
+    if composition is not None:
+        guards = [c for c in result if c['id'].startswith(PREFIX)]
+        requirement = coverage_masks([*coverage_inputs, *guards], length)
+        report['motion_composition'] = dict(policy=composition, resolved_exemptions=exemptions,
+            meaning='Reference ordinary-motion/hold supervision plus declared replacement regions. Not contact, progress or task success.',
+            legacy_position_coverage_report_is_separate=True,
+            generated_constraints=[dict(id=c['id'], type=c['type'], subject=c['subject'], activation=c['activation']) for c in guards],
+            replacement_reference_spans={arm:list(runs(masks[arm]['position_or_motion'], value=True)) for arm in ('left','right')},
+            generated_reference_spans={arm:list(runs(coverage_masks(guards,length)[arm]['position_or_motion'], value=True)) for arm in ('left','right')},
+            complete=all(all(requirement[a]['position_or_motion'][1:]) for a in ('left','right')))
+        if not report['motion_composition']['complete']:
+            raise ValueError('Explicit motion composition leaves uncovered generated frames')
     if override is not None:
         report['coverage_override'] = override
         report['reference_partition_policy'] = {key: POLICY[key] for key in (

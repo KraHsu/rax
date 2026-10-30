@@ -13,7 +13,7 @@ import numpy as np
 
 from services.robotwin.annotation import constraint_positions, reference_values, rotation, validate_reference_bounds
 from services.robotwin.constraint_schema import KINDS, LOCAL_POINT_KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, validate_local_point, vector
-from services.robotwin.full_trajectory import complete_constraints, validate_coverage_policy
+from services.robotwin.full_trajectory import PREFIX, LEGACY_PREFIX, MOTION_EXEMPT_TYPES, complete_constraints, validate_coverage_policy, validate_motion_coverage
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
 SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum', 'joint_gripper_plateaus')
@@ -47,6 +47,19 @@ class OutsideTemplate(ValueError):
 
 def template_hash(template):
     return hashlib.sha256(json.dumps(template, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+
+def legacy_motion_coverage(template):
+    """Declare stable old rule identities before adding independent geometry."""
+    validate_template(template)
+    if template.get('motion_coverage', {}).get('mode', 'legacy_position_override') != 'legacy_position_override':
+        raise ValueError('Automatic motion migration requires a legacy parent template')
+    digest = template_hash(template)
+    return dict(version=1, task=template['task'], mode='independent',
+        rationale='Explicit migration preserves the legacy reference position-rule replacement masks; later geometry is conjoined with ordinary motion.',
+        exemptions=[dict(rule_id=r['id'], primitive=r['type'], rationale='This original rule replaced ordinary motion under the legacy position-coverage policy; freeze its identity and primitive, not episode frame numbers.',
+                         provenance=dict(source='template_migration', reference=f'programmatic_template:{template["task"]}:{digest}', sha256=digest))
+                    for r in template['rules'] if r['type'] in MOTION_EXEMPT_TYPES])
 
 
 def validate_reference_roles(declarations):
@@ -111,7 +124,7 @@ def resolve_reference_roles(template, bundle, arms, meta):
 
 
 def validate_template(t):
-    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'), ('coverage_policy', 'reference_roles'))
+    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'), ('coverage_policy', 'reference_roles', 'motion_coverage'))
     role_names = validate_reference_roles(t['reference_roles']) if 'reference_roles' in t else set()
     if 'coverage_policy' in t:
         validate_coverage_policy(t['coverage_policy'])
@@ -133,7 +146,7 @@ def validate_template(t):
     for r in t['rules']:
         keys(r, ('id', 'type', 'subjects', 'selector', 'origin', 'orientation', 'parameters', 'rationale'),
              ('start_anchor', 'required', 'allowed_margin', 'reference_phase'))
-        if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
+        if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids or r['id'].startswith((PREFIX, LEGACY_PREFIX)):
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
         subjects = {'active_arms', 'left', 'right', 'both_grippers'} | {'role:'+name for name in role_names}
@@ -193,6 +206,8 @@ def validate_template(t):
         if (r['type'] in ('axis_displacement_interval', 'angular_displacement_interval')
                 and kind != 'gripper_plateaus' and r.get('start_anchor', 'selection') == 'selection'):
             raise ValueError('Point displacement needs an explicit earlier start_anchor')
+    if 'motion_coverage' in t:
+        validate_motion_coverage(t['motion_coverage'], task=t['task'], rules=t['rules'])
     return t
 
 
@@ -381,7 +396,8 @@ def instantiate(handle, template):
     if not constraints or len(constraints) > 128 or not any(c['type'] not in ('gripper_interval', 'gripper_pair_max_interval') for c in constraints):
         raise OutsideTemplate('Need 1..128 constraints with at least one geometric feature')
     constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'],
-                                                policy=template.get('coverage_policy'))
+                                                policy=template.get('coverage_policy'), motion_coverage=template.get('motion_coverage'),
+                                                task=template['task'])
     generated = dict(bundle, constraints=constraints, schema_version=SCHEMA_VERSION)
     validate_bundle(generated, len(arms['left']['grip']))
     audit = validate_reference_bounds(generated, handle)

@@ -15,7 +15,8 @@ including zero discovered failures, activates a template or starts training.
    passing actual trajectories identify a stronger subset. Incomplete/planner
    failures do not become native task failures.
 2. **Revision proposal:** `propose_revision` accepts cited development evidence
-   and only `add_rule`/`replace_rule`/`set_coverage_policy`. Task, signatures, existing subjects and
+   and whitelisted rule edits, numeric `set_coverage_policy`, or the separate
+   audited `set_motion_coverage` migration. Task, signatures, existing subjects and
    activation anchors cannot change to hide a counterexample. Rule count/growth
    is bounded. `allowed_margin` has explicit `m`, `rad`, or `fraction` units and
    is independent of penalty scale. The reference activates every rule.
@@ -116,6 +117,12 @@ not establish exact-command causality or activate a revision. An unrealized
 command whose actual trajectory violates constraints cannot trigger this rule.
 
 ## Data-only full-motion tolerance revisions
+
+Composition is separate from numerical tolerance tuning. See
+[`robotwin_motion_composition.md`](robotwin_motion_composition.md) for explicit
+reference-rule exemptions and the independently versioned motion migration.
+Adding a geometry rule under legacy compilation may remove generated ordinary
+motion; only a fixed independent composition policy guarantees preservation.
 
 One patch operation may be `{"op":"set_coverage_policy","policy":{
 "half_angle_rad":1.2,"hold_margin_m":0.04,"direction_slack_m":0.005}}`.
