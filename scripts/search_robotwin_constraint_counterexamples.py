@@ -568,8 +568,9 @@ def prepare_campaign(args):
             raise ValueError('Frozen campaign configuration changed')
         verify_campaign(root)
         return manifest
+    selection_audit = {}
     candidates = generate_candidates(working['trajectory'], working['bundle'], seed=args.random_seed,
-                                     budget=args.candidate_budget, model_candidates=models, feedback_parents=parents)
+                                     budget=args.candidate_budget, model_candidates=models, feedback_parents=parents, selection_audit=selection_audit)
     candidate_specs = [artifact(root, f'candidates/candidate_{i:04d}.json', row) for i, row in enumerate(candidates)]
     manifest = dict(version=DISCOVERY_VERSION, purpose='counterexample_discovery_not_acceptance',
                     created_unix=time.time(), generator_sha256=source_fingerprint(),
@@ -589,7 +590,7 @@ def prepare_campaign(args):
                     source_manifest=artifact(root, 'source_manifest.json', source_manifest),
                     candidates=candidate_specs, candidate_search=search_manifest(working['trajectory'], working['bundle'],
                     seed=args.random_seed, budget=args.candidate_budget, candidates=candidates,
-                    model_candidates=models, feedback_parents=parents),
+                    model_candidates=models, feedback_parents=parents, selection_audit=selection_audit),
                     trial_plan=make_trial_plan(candidates, args.baseline_repeats, include_outside_controls=args.include_outside_controls))
     # Preserve original source bytes, including their original hashes, not a
     # re-serialized object masquerading as the old source artifact.
