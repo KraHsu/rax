@@ -217,7 +217,10 @@ def _embed_review(episode, proposal, *, agent_run, reference_template=None):
         previous_mode = previous_coverage.get('motion_composition', {}).get('policy', {}).get('mode')
         if previous_mode == 'independent' and (reference_template is None or 'motion_coverage' not in reference_template):
             raise ValueError('Independent motion coverage requires an explicit reference template; no silent legacy downgrade')
+        if previous_coverage.get('reference_motion_phases') and reference_template is None:
+            raise ValueError('Reference motion phases require their explicit reference template during reannotation')
         role_audit = None
+        phase_audit = None
         if reference_template is not None:
             # Recompute under the same source lock. Callers cannot supply a
             # role->arm mapping or an unverified provenance claim.
@@ -225,8 +228,10 @@ def _embed_review(episode, proposal, *, agent_run, reference_template=None):
             compiled, programmatic_audit = instantiate(h, reference_template)
             if template_hash(compiled) != template_hash(proposal['constraints']):
                 raise ValueError('Proposal differs from the fixed reference template')
-            if 'reference_roles' in programmatic_audit:
-                role_audit = {key: programmatic_audit[key] for key in ('template_sha256', 'reference_roles')}
+            keys = [key for key in ('reference_roles', 'reference_motion_phases') if key in programmatic_audit]
+            if keys:
+                role_audit = {key: programmatic_audit[key] for key in ('template_sha256', *keys)}
+            phase_audit = programmatic_audit.get('reference_motion_phases')
         bundle = copy.deepcopy(bundle); bundle['constraints'] = proposal['constraints']; bundle['schema_version'] = SCHEMA_VERSION
         validate_bundle(bundle, len(h['endpose/left_endpose']))
         validate_reference_events(bundle, h)
@@ -235,6 +240,8 @@ def _embed_review(episode, proposal, *, agent_run, reference_template=None):
                                                                policy=reference_template.get('coverage_policy') if reference_template is not None else None,
                                                                motion_coverage=reference_template.get('motion_coverage') if reference_template is not None else None,
                                                                task=reference_template['task'] if reference_template is not None else None)
+        if phase_audit is not None:
+            coverage['reference_motion_phases'] = phase_audit
         if reference_template is not None and template_hash(bundle['constraints']) != template_hash(compiled):
             raise ValueError('Embedded constraints differ from the fixed reference compilation')
         validate_bundle(bundle, len(h['endpose/left_endpose']))

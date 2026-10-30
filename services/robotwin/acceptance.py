@@ -88,11 +88,12 @@ def annotation_policy_fingerprint():
     from services.robotwin.constraint_schema import SCHEMA_VERSION
     from services.robotwin.full_trajectory import POLICY as motion_policy
     from services.robotwin.programmatic_annotation import POLICY as numeric_policy
+    from services.robotwin.reference_motion_phase import POLICY as reference_phase_policy
 
     # Includes numeric behavior, not only a manually maintained version label.
     source_names = ('annotation.py', 'constraint_schema.py', 'constraint_coverage.py', 'acceptance_replay.py',
-                    'full_trajectory.py', 'programmatic_annotation.py')
-    return json_hash(dict(schema=SCHEMA_VERSION, numeric=numeric_policy, motion=motion_policy,
+                    'full_trajectory.py', 'programmatic_annotation.py', 'reference_motion_phase.py')
+    return json_hash(dict(schema=SCHEMA_VERSION, numeric=numeric_policy, motion=motion_policy, reference_phase=reference_phase_policy,
                           source_sha256={name: file_hash(Path(__file__).with_name(name)) for name in source_names}))
 
 

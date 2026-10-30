@@ -14,9 +14,10 @@ import numpy as np
 from services.robotwin.annotation import constraint_positions, reference_values, rotation, validate_reference_bounds
 from services.robotwin.constraint_schema import KINDS, LOCAL_POINT_KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, validate_local_point, vector
 from services.robotwin.full_trajectory import PREFIX, LEGACY_PREFIX, MOTION_EXEMPT_TYPES, complete_constraints, validate_coverage_policy, validate_motion_coverage
+from services.robotwin.reference_motion_phase import POLICY as PHASE_POLICY, InvalidReferenceMotionPhase, select_reference_motion_phase, reference_segment_axis
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
-SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum', 'joint_gripper_plateaus')
+SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum', 'joint_gripper_plateaus', 'motion_segment')
 GRIPPER_PLATEAU_EPSILON = 1e-6
 
 
@@ -173,7 +174,16 @@ def validate_template(t):
             params.update(('local_axis', 'reference_axis'))
         keys(r['parameters'], params, ('local_point',) if r['type'] in LOCAL_POINT_KINDS else ())
         for key in params:
-            vector(r['parameters'][key], 3, unit=True)
+            if key == 'axis' and isinstance(r['parameters'][key], str):
+                if (r['parameters'][key] != 'reference_segment_direction'
+                        or r['type'] not in ('axis_displacement_interval', 'axis_position_interval')
+                        or not isinstance(r['selector'], dict)
+                        or r['selector'].get('kind') != 'motion_segment'
+                        or r['selector'].get('evaluation') != 'endpoint'
+                        or r['origin'] != 'selection_start' or r['orientation'] != 'world'):
+                    raise ValueError('Reference segment direction requires an endpoint phase position/displacement feature in the world frame')
+            else:
+                vector(r['parameters'][key], 3, unit=True)
         if 'local_point' in r['parameters']:
             validate_local_point(r['parameters']['local_point'], r['type'])
         s = r['selector']; kind = s.get('kind') if isinstance(s, dict) else None
@@ -183,7 +193,16 @@ def validate_template(t):
         if kind == 'events': fields.update(('direction', 'occurrence'))
         if kind in ('gripper_plateaus', 'joint_gripper_plateaus'): fields.update(('state', 'after'))
         if kind == 'position_extremum': fields.update(('axis', 'which', 'after'))
+        if kind == 'motion_segment': fields.update(('version', 'after', 'occurrence', 'evaluation'))
         keys(s, fields)
+        if kind == 'motion_segment':
+            if (type(s['version']) is not int or s['version'] != 1 or s['occurrence'] != 'last' or s['after'] != 'first_close'
+                    or s['evaluation'] not in ('interval', 'endpoint') or not r.get('required', True)
+                    or r['type'] not in set(LOCAL_POINT_KINDS) | {'axis_angle_interval'}
+                    or r.get('start_anchor', 'selection') != 'selection'
+                    or (r['type'] == 'axis_displacement_interval' and
+                        (s['evaluation'] != 'endpoint' or r['parameters']['axis'] != 'reference_segment_direction'))):
+                raise ValueError('Motion phases require fixed version/selection, required geometry, and endpoint-only paired displacement')
         if kind == 'events' and (s['direction'] not in ('increasing', 'decreasing', 'any') or s['occurrence'] not in ('all', 'first', 'last')):
             raise ValueError('Invalid event selector')
         if kind == 'gripper_plateaus' and s['state'] not in ('closed', 'open', 'all'):
@@ -204,7 +223,7 @@ def validate_template(t):
         if kind == 'gripper_plateaus' and r.get('start_anchor', 'selection') != 'selection':
             raise ValueError('An interval displacement must start at its selected interval')
         if (r['type'] in ('axis_displacement_interval', 'angular_displacement_interval')
-                and kind != 'gripper_plateaus' and r.get('start_anchor', 'selection') == 'selection'):
+                and kind not in ('gripper_plateaus', 'motion_segment') and r.get('start_anchor', 'selection') == 'selection'):
             raise ValueError('Point displacement needs an explicit earlier start_anchor')
     if 'motion_coverage' in t:
         validate_motion_coverage(t['motion_coverage'], task=t['task'], rules=t['rules'])
@@ -251,6 +270,9 @@ def anchor(name, arm):
 
 def selections(selector, arm):
     kind = selector['kind']; length = len(arm['grip'])
+    if kind == 'motion_segment':
+        window, _ = motion_phase_selection(selector, arm)
+        return [window]
     if kind == 'terminal': return [{'mode': 'endpoint', 'start': length-1, 'end': length}]
     if kind == 'events':
         events = [e for e in arm['events'] if selector['direction'] in ('any', e['direction'])]
@@ -278,6 +300,15 @@ def selections(selector, arm):
     edges = np.diff(np.r_[False, mask, False].astype(int))
     return [{'mode': 'interval', 'start': int(lo), 'end': int(hi)}
             for lo, hi in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)) if hi-lo >= 2]
+
+
+def motion_phase_selection(selector, arm):
+    segment, audit = select_reference_motion_phase(arm['pose'][:, :3], anchor(selector['after'], arm))
+    endpoint = selector['evaluation'] == 'endpoint'
+    window = dict(mode='endpoint' if endpoint else 'interval',
+                  start=segment['anchor'] if endpoint else segment['first_action'],
+                  end=segment['end_exclusive'])
+    return window, audit
 
 
 
@@ -315,7 +346,7 @@ def instantiate(handle, template):
     constraints = []; thash = template_hash(template)
     uses_joint = any(r['type'] == 'gripper_pair_max_interval' or 'reference_phase' in r for r in template['rules'])
     joint_windows, joint_audit = joint_gripper_windows(arms) if uses_joint else ([], None)
-    removed = []; retained = []
+    removed = []; retained = []; phase_audits = []
     for rule in template['rules']:
         subjects = [a for a in arms if arms[a]['active']] if rule['subjects'] == 'active_arms' else [rule['subjects']]
         if rule['subjects'].startswith('role:'):
@@ -324,7 +355,13 @@ def instantiate(handle, template):
         for subject in subjects:
             pair = rule['type'] == 'gripper_pair_max_interval'
             arm = arms['left'] if pair else arms[subject]
-            try: windows = copy.deepcopy(joint_windows) if pair else selections(rule['selector'], arm)
+            phase_audit = None
+            try:
+                if rule['selector']['kind'] == 'motion_segment':
+                    window, phase_audit = motion_phase_selection(rule['selector'], arm)
+                    windows = [window]
+                else:
+                    windows = copy.deepcopy(joint_windows) if pair else selections(rule['selector'], arm)
             except OutsideTemplate:
                 if rule.get('required', True): raise
                 windows = []
@@ -354,11 +391,22 @@ def instantiate(handle, template):
                     if activation['start'] > lo: raise OutsideTemplate('Displacement anchor is after selection')
                     if activation['start'] == hi == lo: raise OutsideTemplate('Zero-length displacement has no training signal')
                 kind = rule['type']
+                parameters = copy.deepcopy(rule['parameters'])
+                if phase_audit is not None:
+                    if kind == 'axis_displacement_interval' and hi-activation['start'] > PHASE_POLICY['maximum_predicted_anchor_span']:
+                        raise InvalidReferenceMotionPhase('Selected paired displacement exceeds the 32-action chunk; no reference-anchor substitution', phase_audit)
+                    if parameters.get('axis') == 'reference_segment_direction':
+                        parameters['axis'], point_distance = reference_segment_axis(positions, phase_audit['selected'], phase_audit)
+                        phase_audit['derived_axis'] = dict(source='reference_physical_point_net_displacement',
+                            world_axis=parameters['axis'], net_distance_m=point_distance,
+                            local_point=copy.deepcopy(parameters.get('local_point')))
+                    if kind == 'axis_displacement_interval':
+                        parameters['anchor'] = 'predicted_start'
                 scale = POLICY['gripper_margin'] if kind in ('gripper_interval', 'gripper_pair_max_interval') else (
                     POLICY['angle_margin_rad'] if kind in ('axis_angle_interval', 'angular_displacement_interval') else POLICY['position_margin_m'])
                 c = {'id': f'{rule["id"]}_{subject}_{lo}_{hi}', 'type': kind, 'subject': subject if pair else subject+'_eef',
                      'reference_frame': {'origin_m': origin, 'quaternion_wxyz': quat},
-                     'parameters': dict(copy.deepcopy(rule['parameters']), bounds=[0., 0.]), 'activation': activation,
+                     'parameters': dict(parameters, bounds=[0., 0.]), 'activation': activation,
                      'penalty': {'kind': 'squared_hinge', 'scale': scale, 'weight': 1.},
                      'evidence': {'source': 'demonstration_analysis', 'status': 'accepted',
                          'report_id': bundle['provenance']['recording_id'],
@@ -366,6 +414,15 @@ def instantiate(handle, template):
                                       + rule['rationale'] + ' Bounds are recomputed from this reference with explicit operator margins; '
                                       'not a physically calibrated feasible region or proof of contact/grasp/support. '
                                       'Displacement requires its original start anchor in the training chunk.'}}
+                if phase_audit is not None:
+                    phase_audit.update(rule_id=rule['id'], subject=subject, selector=copy.deepcopy(rule['selector']),
+                        compiled_constraint_id=c['id'], activation=copy.deepcopy(activation),
+                        reference_input_sha256=template_hash(dict(pose=arm['pose'].tolist(), gripper=arm['grip'].tolist(),
+                            action_contract=bundle['action_contract'], recording_id=bundle['provenance']['recording_id'])))
+                    phase_audits.append(phase_audit)
+                    c['evidence']['rationale'] += (f' Fixed reference motion phase v1; reference_input_sha256={phase_audit["reference_input_sha256"]}. '
+                        'EEF-origin segmentation and physical-point displacement are distinct. This is not an observed contact phase. '
+                        'Paired displacement is inactive in chunks missing either endpoint; no fixed-reference anchor replaces it.')
                 if rule['subjects'].startswith('role:'):
                     c['evidence']['rationale'] += (f' Fixed reference role {rule["subjects"][5:]} -> {subject}; '
                         f'reference_sha256={role_audit["reference_sha256"]}; '
@@ -398,12 +455,16 @@ def instantiate(handle, template):
     constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'],
                                                 policy=template.get('coverage_policy'), motion_coverage=template.get('motion_coverage'),
                                                 task=template['task'])
+    phase_audit = dict(version=1, policy=copy.deepcopy(PHASE_POLICY), selections=phase_audits) if phase_audits else None
+    if phase_audit is not None:
+        coverage['reference_motion_phases'] = phase_audit
     generated = dict(bundle, constraints=constraints, schema_version=SCHEMA_VERSION)
     validate_bundle(generated, len(arms['left']['grip']))
     audit = validate_reference_bounds(generated, handle)
     return constraints, {'template_sha256': thash, 'signature': signature, 'policy': POLICY,
                          'reference_audit': audit, 'coverage': coverage,
                          **({'reference_roles': role_audit} if role_audit is not None else {}),
+                         **({'reference_motion_phases': phase_audit} if phase_audit is not None else {}),
                          **({'joint_gripper_reference': joint_audit} if uses_joint else {})}
 
 
