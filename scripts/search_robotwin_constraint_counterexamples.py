@@ -539,6 +539,9 @@ def prepare_campaign(args):
     working = prepare_reference(source, source_manifest, template, exclusions)
     split_plan = read(args.split_plan)
     release = read(args.holdout_release) if args.holdout_release else None
+    if args.split == 'holdout':
+        from services.robotwin.refinement_exposure import require_active_reservation
+        require_active_reservation(release)
     validate_split(split_plan, args.split, task=template['task'], scene_seed=working['provenance']['seed'], exclusions=exclusions,
                    template_sha256=template_hash(template), annotation_policy_sha256=annotation_policy_fingerprint(), release=release)
     if args.split == 'holdout' and args.feedback:
@@ -635,6 +638,9 @@ def run(args):
         state = dict(status='running_trials', started_unix=started, task=manifest['task'], split=manifest['split'])
         try:
             for planned in manifest['trial_plan']:
+                if manifest['split'] == 'holdout':
+                    from services.robotwin.refinement_exposure import require_active_reservation
+                    require_active_reservation(manifest['holdout_release'])
                 directory = root/'trials'/planned['trial_id']
                 state.update(current_trial=planned['trial_id'], updated_unix=time.time()); atomic_json(root/'run.json', state)
                 if not (directory/'record.json').exists():

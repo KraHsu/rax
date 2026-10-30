@@ -187,6 +187,39 @@ def test_reference_projected_full_policy_seed_is_not_a_full_policy_candidate():
         assess(data)
 
 
+def test_duplicate_successes_cannot_dilute_scene_normalized_retention():
+    values = [row(1, success=True, accepted=True) for _ in range(100)]
+    values += [row(2, success=True, accepted=False)]
+    result = gate.source_summary(values)
+    assert result['success_retention'] > .98
+    assert result['scene_normalized_success_retention'] == .5
+    assert result['unique_scene_trajectories'] == 2
+    assert result['duplicate_trajectory_rows'] == 99
+
+
+def test_same_action_opposite_outcomes_are_reported_as_inseparable():
+    result = gate.source_summary([row(success=True), row(success=False)])
+    assert len(result['action_outcome_aliases']) == 1
+    assert result['false_accepts'] == 1
+
+
+def test_many_admitted_unexecutable_actions_cannot_count_as_safe():
+    data = inputs()
+    model = next(r for r in data[-1] if r['source'] == 'model')
+    model['planner_success'] = False
+    result = assess(data)
+    assert 'model_accepted_execution_coverage_insufficient' in result['reasons']
+    assert not result['sources']['model']['confidence_eligible']
+
+
+def test_measured_actual_false_accept_survives_unrealized_intervention():
+    value = row(success=False, accepted=True)
+    value['realized'] = False
+    result = gate.source_summary([value])
+    assert result['eligible'] == 0 and result['false_accepts'] == 0
+    assert result['observed_actual_false_accepts'] == 1
+
+
 def test_physical_margins_do_not_change_penalty_scale():
     t = template(); t['rules'][0]['allowed_margin'] = dict(lower=.01, upper=.04, unit='m')
     ref = reference(1, t)

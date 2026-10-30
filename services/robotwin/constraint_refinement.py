@@ -20,6 +20,7 @@ VERSION = 1
 DEFAULT_PROTOCOL = dict(version=1, confidence=.95, maximum_scene_failure_risk=.1,
                         minimum_accepted_scenes=29, minimum_native_success_scenes=10,
                         minimum_success_retention=.8, required_sources=['crafted', 'model'],
+                        minimum_accepted_execution_fraction=.8,
                         minimum_crafted_families=3, maximum_rules=24, maximum_rule_growth=8,
                         require_zero_observed_false_accepts=True)
 ACTIVATION_FIELDS = ('selector', 'subjects', 'start_anchor', 'required')
@@ -38,7 +39,7 @@ def validate_protocol(protocol=None):
     p = copy.deepcopy(DEFAULT_PROTOCOL if protocol is None else protocol)
     if set(p) != set(DEFAULT_PROTOCOL) or p['version'] != VERSION:
         raise ValueError('Explicit complete refinement protocol required')
-    for name in ('confidence', 'maximum_scene_failure_risk', 'minimum_success_retention'):
+    for name in ('confidence', 'maximum_scene_failure_risk', 'minimum_success_retention', 'minimum_accepted_execution_fraction'):
         if type(p[name]) not in (int, float) or not math.isfinite(p[name]) or not 0 < p[name] < 1:
             raise ValueError('Invalid refinement probability')
     for name in ('minimum_accepted_scenes', 'minimum_native_success_scenes', 'minimum_crafted_families',
@@ -138,10 +139,15 @@ def classify(row):
 
 def source_summary(rows):
     counts = dict(received=len(rows), eligible=0, accepted=0, native_successes=0,
-                  false_accepts=0, strong_false_accepts=0, false_rejects=0)
+                  false_accepts=0, strong_false_accepts=0, false_rejects=0,
+                  observed_actual_false_accepts=0)
     scenes = {}
     for row in rows:
         decision = classify(row)
+        # Descriptive measured evidence survives failed intervention tracking.
+        # This does not enter the precise-command causal/acceptance denominator.
+        counts['observed_actual_false_accepts'] += bool(
+            row['execution_complete'] and row['actual_constraint_pass'] is True and row['native_success'] is False)
         if not decision['eligible']:
             continue
         counts['eligible'] += 1
@@ -164,6 +170,38 @@ def source_summary(rows):
                                    if counts['native_successes'] else None)
     counts['source_model_modes'] = sorted({r.get('model_provenance', {}).get('source_kind')
                                           for r in rows if r['source'] == 'model'})
+    groups = {}
+    for row in rows:
+        groups.setdefault((row['scene_seed'], row['scene_sha256']), {}).setdefault(row['trajectory_sha256'], []).append(row)
+    normalized, aliases, unique = [], [], 0
+    for (seed, scene), trajectories in groups.items():
+        successes = retained = accepted = executed = executed_all = 0
+        for digest, repeats in trajectories.items():
+            unique += 1
+            if len({r['commanded_constraint_pass'] for r in repeats}) != 1:
+                raise ValueError('Identical scene/action has inconsistent deterministic constraint verdicts')
+            valid = [r for r in repeats if eligible(r)]
+            native = {r['native_success'] for r in valid}
+            accepted += repeats[0]['commanded_constraint_pass']
+            fully_executed = all(eligible(r) for r in repeats)
+            executed += repeats[0]['commanded_constraint_pass'] and fully_executed
+            executed_all += fully_executed
+            successes += True in native
+            retained += True in native and repeats[0]['commanded_constraint_pass']
+            if len(native) > 1:
+                aliases.append(dict(scene_seed=seed, scene_sha256=scene, trajectory_sha256=digest,
+                                    trials=[r['trial_id'] for r in repeats],
+                                    meaning='Identical actions have different native outcomes; action-only rules cannot separate them.'))
+        normalized.append(dict(scene_seed=seed, scene_sha256=scene, unique_trajectories=len(trajectories),
+                               success_retention=retained/successes if successes else None,
+                               accepted_execution_fraction=executed/accepted if accepted else None,
+                               execution_fraction=executed_all/len(trajectories)))
+    retention = [r['success_retention'] for r in normalized if r['success_retention'] is not None]
+    execution = [r['accepted_execution_fraction'] for r in normalized if r['accepted_execution_fraction'] is not None]
+    counts.update(unique_scene_trajectories=unique, duplicate_trajectory_rows=len(rows)-unique,
+                  action_outcome_aliases=aliases, per_scene=normalized,
+                  scene_normalized_success_retention=sum(retention)/len(retention) if retention else None,
+                  minimum_scene_accepted_execution_fraction=min(execution) if execution else None)
     return counts
 
 
@@ -319,7 +357,7 @@ def assess_holdout(sealed, release, split_plan, development, rows, *, complete, 
     proposal['state'] = 'revision_proposed'
     expected_sealed, expected_release = seal_revision(proposal, split_plan, development,
                                                       frozen_unix=sealed['frozen_unix'])
-    if sealed != expected_sealed or release != expected_release:
+    if sealed != expected_sealed or {k: v for k, v in release.items() if k != 'exposure_reservation'} != expected_release:
         raise ValueError('Frozen revision/release changed or implementation policy differs')
     p = validate_protocol(sealed['protocol'])
     reasons = []
@@ -376,8 +414,13 @@ def assess_holdout(sealed, release, split_plan, development, rows, *, complete, 
                 reasons.append(source+'_insufficient_independent_accepted_scenes')
             if summary['native_success_scenes'] < p['minimum_native_success_scenes']:
                 reasons.append(source+'_insufficient_success_diversity')
-            if summary['success_retention'] is None or summary['success_retention'] < p['minimum_success_retention']:
+            retention = summary['scene_normalized_success_retention']
+            if retention is None or retention < p['minimum_success_retention']:
                 reasons.append(source+'_rejects_successful_behaviors')
+            execution = summary['minimum_scene_accepted_execution_fraction']
+            if execution is None or execution < p['minimum_accepted_execution_fraction']:
+                reasons.append(source+'_accepted_execution_coverage_insufficient')
+                sampling_complete = False
             if n and summary['scene_failure_upper_bound'] > p['maximum_scene_failure_risk']:
                 reasons.append(source+'_risk_bound_not_met')
             if p['require_zero_observed_false_accepts'] and summary['false_accepts']:
@@ -398,7 +441,7 @@ def assess_holdout(sealed, release, split_plan, development, rows, *, complete, 
                         'not an all-actions success guarantee or an IID claim about adaptive discovery variants.')
 
 
-def assess_revision(revision_root, *, verify_campaign=None):
+def assess_revision(revision_root, *, verify_campaign=None, expected_registry=None):
     """Re-read frozen inputs and independently verify every native campaign."""
     root = Path(revision_root).resolve()
     if verify_campaign is None:
@@ -434,15 +477,19 @@ def assess_revision(revision_root, *, verify_campaign=None):
                            records_sha256=checked['records_sha256']))
     report = assess_holdout(sealed, release, split_plan, development, rows, complete=complete,
                             preregistered_trial_ids=planned)
+    from services.robotwin.refinement_exposure import verify_reservation
+    from services.robotwin.refinement_model_evidence import verify_model_evidence
+    report['exposure'] = verify_reservation(root, release, rows, expected_registry=expected_registry)
+    report['model_evidence'] = verify_model_evidence(root/'model_evidence.json', rows, release)
     report['evidence'] = dict(revision_root=str(root), campaigns=proofs,
                              frozen_inputs={name: file_hash(root/name) for name in (
                                  'sealed_revision.json', 'holdout_release.json', 'split_plan.json',
-                                 'development_report.json', 'holdout_campaigns.json')})
+                                 'development_report.json', 'holdout_campaigns.json', 'model_evidence.json')})
     return report
 
 
 def attach_revision(registry_root, revision_root):
-    report = assess_revision(revision_root)
+    report = assess_revision(revision_root, expected_registry=registry_root)
     path = Path(registry_root)/'refinement_reports'/report['task']/(report['template_sha256']+'.json')
     atomic_json(path, report)
     return report
@@ -466,7 +513,7 @@ def refinement_readiness(registry_root, required_templates):
                                  reason='independent_refinement_evidence_missing'))
                 continue
             report = read(path)
-            fresh = assess_revision(report['evidence']['revision_root'])
+            fresh = assess_revision(report['evidence']['revision_root'], expected_registry=root)
             ready = (derived_values_equal(fresh, report) and report['ready'] and report['task'] == task
                      and report['template_sha256'] == digest and report['protocol'] == protocol)
             rows.append(dict(task=task, template_sha256=digest, ready=ready, report_path=str(path),

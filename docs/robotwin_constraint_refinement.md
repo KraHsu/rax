@@ -19,7 +19,9 @@ including zero discovered failures, activates a template or starts training.
    activation anchors cannot change to hide a counterexample. Rule count/growth
    is bounded. `allowed_margin` has explicit `m`, `rad`, or `fraction` units and
    is independent of penalty scale. The reference activates every rule.
-3. **Seal:** `seal_revision` freezes the template, numeric implementation,
+3. **Seal and reserve:** `reserve_holdout` in `refinement_exposure` calls the
+   pure `seal_revision` helper and registers the release in the owning registry.
+   The helper alone cannot authorize a final experiment. This freezes the template, numeric implementation,
    protocol, development ledger, disjoint scene split and generator. The frozen
    generator specifies random seed, candidate budget, baseline repetitions,
    replay of outside controls, per-source scene budgets and model checkpoint.
@@ -31,11 +33,15 @@ including zero discovered failures, activates a template or starts training.
    `attach_revision` saves the recheckable report. Failures return
    `needs_revision`; accepted revisions are eligible for publication, subject to
    the existing v2 native evidence gate as well. Once holdout outcomes are read,
-   those scenes are development evidence for subsequent revisions: include all
+   those scenes are development evidence for subsequent revisions. Close the
+   round with `consume_holdout`, which burns **all reserved seeds**, records all
+   observed scene identities, and prevents further collection in that round.
+   Subsequent reservations in the same registry reject reused seeds or scenes;
+   final publication verifies registry ownership and complete history. Include
    exposed rows in the next development ledger and allocate a fresh holdout.
 
 A revision directory contains `sealed_revision.json`, `holdout_release.json`,
-`split_plan.json`, `development_report.json`, and `holdout_campaigns.json` with
+`split_plan.json`, `development_report.json`, `model_evidence.json`, and `holdout_campaigns.json` with
 `{"version":1,"campaigns":["/absolute/raw/campaign/root", "..."]}`.
 Campaign artifacts and revision files must remain available for later training
 validation; summaries alone are insufficient.
@@ -51,12 +57,30 @@ search transform or reference blending.
 
 Default release requirements apply separately to crafted and actual model
 sources: at least 29 distinct accepted scenes, at least 10 scenes with native
-success, at least 80% retention of successful tested behaviors, three crafted
+success, at least 80% retention of successful tested behaviors averaged equally
+over scenes after deduplicating identical scene/action traces, three crafted
 families, and no observed admitted failures. Within each scene, any admitted
 failure counts as a scene failure. The one-sided exact 95% upper risk bound must
 be at most 10%; zero failures in 29 independent accepted scenes meets that
 numeric threshold. Correlated variants from three scenes never become 29
 independent samples. Incomplete sampling gets no confidence claim.
+
+At least 80% of admitted unique actions in **every tested scene** must have
+completed, realized, planner-valid executions. Excluding many unexecutable
+admitted actions therefore cannot make a template appear safe. Counts also
+report identical scene/action traces with conflicting native outcomes: an
+action-only rule cannot separate those outcomes; failures remain in the report.
+
+Final model proof inventory has shape `{"version":1,"runs":[{"root":"...",
+"checkpoint_path":"...","checkpoint_receipt_path":"...",
+"server_config_path":"...","server_receipt_path":"...","collector_path":"..."}]}`.
+For each run the gate rehashes the real checkpoint and collector receipts, original
+raw EEF20 actions, per-step observation receipts, and original candidate file.
+It independently reconstructs the declared legacy rotation conversion and
+native gripper clipping. The executed candidate must have the exact original
+trajectory hash; provenance booleans alone do not prove model origin. Source
+runs must have `created_unix >= frozen_unix` for final holdout. Current
+development captures remain descriptive if they predate this proof contract.
 
 This describes scene-level conditional risk under the declared frozen generator
 and policy distribution. It is not proof that every action satisfying the
