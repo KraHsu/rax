@@ -136,3 +136,47 @@ development evidence, produces a new template hash, and remains only a proposal
 until the revised policy and generator are frozen and pass fresh independent
 native holdout. Arbitrary keys, code, booleans, nonfinite numbers and repeated
 coverage replacements in one patch are rejected.
+
+## Joint gripper candidate (schema 1.4)
+
+`gripper_pair_max_interval`, subject `both_grippers`, measures
+`u = max(left_open_fraction, right_open_fraction)`. It uses the canonical
+identity reference frame, fixed interval activation, fraction bounds in `[0,1]`,
+and the ordinary interval hinge and configured penalty scale. The OpenWAM
+physical decoder supplies columns 9 and 19; both must be valid at a frame.
+A padded hand never substitutes for the other. `torch.amax` divides tied maximum
+subgradients over the two independent grip dimensions. A positive lower bound
+therefore provides finite gradients to both hands at equal closed commands.
+The pair counts once as a supervised feature, not twice as two marginal rules.
+Schema 1.0–1.3 remain readable, including schema 1.3 window direction constraints.
+
+The fixed template selector is `joint_gripper_plateaus`, state
+`before_joint_closed`, after `episode_start`. The boundary is the first reference
+frame beginning at least two consecutive frames with both opening fractions
+within `1e-6` of zero. Earlier max-opening plateaus must remain within `1e-6` of
+their run's first value for at least two frames. Max may stay stable while the
+other hand ramps. This boundary is a reference command landmark, not measured
+contact or physical grasp. A missing boundary is rejected as outside template.
+
+A data-only `replace_pregrasp_gripper_with_pair` operation names `rule_ids` and
+one `joint_rule`. Only existing per-arm `gripper_interval` rules selecting
+`gripper_plateaus/all/episode_start` can be migrated. Each old rule gains
+`reference_phase: after_joint_closed`; its later bounds, units, margins and loss
+scale remain intact. Existing fully-closed holding rules are untouched. The
+instantiator records replaced preframes and retained postwindows and requires
+every removed action frame to be covered by an effective joint interval with
+positive lower bound. Asynchronous patterns with remaining gaps are rejected
+for review. Generic `replace_rule` cannot alter this phase or other anchors.
+
+`joint_gripper_proposal` requires cited verified development successes and
+failures and returns `revision_proposed` only. Margins are hypotheses. Joint
+expressivity resolves a demonstrated product-set limitation; it does not certify
+success. Fresh policy fingerprints, native counterexample search, and independent
+holdout are still needed before dataset publication or training.
+
+The separate positive-lower angular-band limitation remains unresolved: exactly
+aligned axes have zero cross-product norm gradient even when the lower-angle
+hinge is positive. CPU regression preserves this fact and checks finite outward
+gradients on either side. Floating-point rounding around an angular mode
+midpoint is not a convergence guarantee. This version does not silently change
+the angular loss or release the current candidate for training.

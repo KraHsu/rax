@@ -3,9 +3,9 @@ const $ = id => document.getElementById(id);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {adjust_bottle:'调整瓶子',beat_block_hammer:'锤击积木',blocks_ranking_rgb:'积木颜色排序',blocks_ranking_size:'积木大小排序',click_alarmclock:'按下闹钟',click_bell:'按铃',dump_bin_bigbin:'倾倒垃圾桶',grab_roller:'双臂抓取滚筒',handover_block:'积木交接',handover_mic:'麦克风交接',hanging_mug:'悬挂马克杯',lift_pot:'抬起锅具',move_can_pot:'移动罐子到锅中',move_pillbottle_pad:'移动药瓶到垫子',move_playingcard_away:'移开扑克牌',move_stapler_pad:'移动订书机到垫子',open_laptop:'打开笔记本电脑',open_microwave:'打开微波炉',pick_diverse_bottles:'抓取不同瓶子',pick_dual_bottles:'双臂抓瓶',place_a2b_left:'左侧物体放置',place_a2b_right:'右侧物体放置',place_bread_basket:'面包放入篮子',place_bread_skillet:'面包放入煎锅',place_burger_fries:'汉堡与薯条放置',place_can_basket:'罐子放入篮子',place_cans_plasticbox:'罐子放入塑料箱',place_container_plate:'容器放到盘子上',place_dual_shoes:'双鞋放置',place_empty_cup:'放置空杯',place_fan:'放置风扇',place_mouse_pad:'鼠标放到垫子上',place_object_basket:'物体放入篮子',place_object_scale:'物体放到秤上',place_object_stand:'物体放到支架',place_phone_stand:'手机放到支架',place_shoe:'放置鞋子',press_stapler:'按压订书机',put_bottles_dustbin:'瓶子放入垃圾桶',put_object_cabinet:'物体放入柜子',rotate_qrcode:'旋转二维码',scan_object:'扫描物体',shake_bottle:'摇晃瓶子',shake_bottle_horizontally:'水平摇晃瓶子',stack_blocks_three:'堆叠三块积木',stack_blocks_two:'堆叠两块积木',stack_bowls_three:'堆叠三个碗',stack_bowls_two:'堆叠两个碗',stamp_seal:'盖章',turn_switch:'转动开关'};
 const isDirection = c => ['motion_direction_cone','window_direction_cone'].includes(c?.type);
-const kinds = {window_direction_cone:'多帧净位移方向锥',motion_direction_cone:'移动方向锥',axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
+const kinds = {gripper_pair_max_interval:'双夹爪最大开度',window_direction_cone:'多帧净位移方向锥',motion_direction_cone:'移动方向锥',axis_position_interval:'轴向位置',radial_distance_interval:'到轴线的距离',point_distance_interval:'到参考点的距离',axis_angle_interval:'轴向夹角',axis_displacement_interval:'轴向位移',angular_displacement_interval:'角位移',gripper_interval:'夹爪指令区间'};
 const statusNames = {queued:'等待采集',initializing:'初始化',recording:'采集中',recorded:'录制完成',failed:'需要处理',retry_queued:'等待重试'};
-const armName = arm => arm.startsWith('left') ? '左臂' : '右臂';
+const armName = arm => arm.startsWith('both') ? '双夹爪' : arm.startsWith('left') ? '左臂' : '右臂';
 const number = v => Number(v).toLocaleString('en-US');
 const fmt = (v, decimals=4) => Number(v).toFixed(decimals);
 const colors = ['#76b8ff','#e8b36d','#b7a4ff'];
@@ -31,7 +31,8 @@ function frameRuns(frames) {
 }
 function isActive(c,f){return !!c?.active_frames.includes(f);}
 function isViolation(c,f){const v=c.values[f],[lo,hi]=c.parameters.bounds;return isActive(c,f)&&(v<lo-1e-9||v>hi+1e-9);}
-function constraintArm(c){return c.subject.split('_')[0];}
+function constraintArm(c){return c.subject==='both_grippers'?'both':c.subject.split('_')[0];}
+function armMatches(c,arm){return arm==='both'||constraintArm(c)==='both'||constraintArm(c)===arm;}
 function featureDisplay(c) {
   const factor=c.unit==='rad'?180/Math.PI:isDirection(c)?1000:1;
   return {values:c.values.map(v=>v*factor),bounds:c.parameters.bounds.map(v=>v*factor),
@@ -71,6 +72,7 @@ function circle3(center,axis,radius) {
 function spatialGeometry(c,d,f) {
   const geometry={lines:[],arrows:[],focus:[],note:''};
   if(!c||!isActive(c,f)){geometry.note=c?'所选约束当前未激活；点击生效区间或开启随帧切换。':'当前没有约束标注。';return geometry;}
+  if(c.type==='gripper_pair_max_interval'){geometry.note='允许范围作用于 max(左夹爪开度,右夹爪开度)，不分别限制两手。';return geometry;}
   const poses=d.arms[constraintArm(c)].pose,p=poses[f].slice(0,3),origin=constraintOrigin(c,d),[lo,hi]=c.parameters.bounds;
   const line=(points,role='allowed')=>{geometry.lines.push({points,role});geometry.focus.push(...points);};
   const arrow=(start,end,role='axis')=>{geometry.arrows.push({start,end,role});geometry.focus.push(start,end);};
@@ -319,9 +321,9 @@ function lineChart(id, series, options={}) {
 function followConstraint() {
   if(!$('follow-constraints').checked)return;
   const arm=$('arm-select').value,current=selectedConstraint(),mode=$('signal-kind').value;
-  const relevant=c=>mode==='feature'||(mode==='gripper'?c.type==='gripper_interval':!['gripper_interval','axis_angle_interval','angular_displacement_interval'].includes(c.type));
-  if(current&&isActive(current,state.frame)&&(arm==='both'||constraintArm(current)===arm)&&relevant(current))return;
-  const candidates=state.detail.constraints.map((c,i)=>({c,i})).filter(({c})=>isActive(c,state.frame)&&(arm==='both'||constraintArm(c)===arm)&&relevant(c));
+  const relevant=c=>mode==='feature'||(mode==='gripper'?['gripper_interval','gripper_pair_max_interval'].includes(c.type):!['gripper_interval','gripper_pair_max_interval','axis_angle_interval','angular_displacement_interval'].includes(c.type));
+  if(current&&isActive(current,state.frame)&&armMatches(current,arm)&&relevant(current))return;
+  const candidates=state.detail.constraints.map((c,i)=>({c,i})).filter(({c})=>isActive(c,state.frame)&&armMatches(c,arm)&&relevant(c));
   // Prefer a task-specific constraint to generic motion coverage; preserve a
   // user's active selection until it expires. This changes the view, not labels.
   const next=candidates.find(({c})=>!c.id.startsWith('__full_motion'))||candidates[0];
@@ -330,7 +332,7 @@ function followConstraint() {
 function selectConstraint(index,frame) {
   const c=state.detail?.constraints[index];if(!c)return;
   state.constraint=index;$('arm-select').value=constraintArm(c);
-  $('signal-kind').value=c.type==='gripper_interval'?'gripper':
+  $('signal-kind').value=c.type==='gripper_pair_max_interval'?'feature':c.type==='gripper_interval'?'gripper':
     ['axis_position_interval','axis_displacement_interval','point_distance_interval'].includes(c.type)?'position':'feature';
   renderConstraints();stop();setFrame(frame??c.active_frames[0]);
 }
@@ -339,14 +341,14 @@ function renderConstraintTimeline() {
   $('constraint-timeline-wrap').hidden=!$('show-constraints').checked;
   if(!$('show-constraints').checked)return;
   const groups=new Map();
-  d.constraints.forEach((c,i)=>{if(arm!=='both'&&constraintArm(c)!==arm)return;const key=`${constraintArm(c)}:${c.type}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push({c,i});});
+  d.constraints.forEach((c,i)=>{if(!armMatches(c,arm))return;const key=`${constraintArm(c)}:${c.type}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push({c,i});});
   if(!groups.size){host.innerHTML='<div class="empty">当前机械臂尚无约束</div>';return;}
-  const short={window_direction_cone:'多帧方向',motion_direction_cone:'方向',point_distance_interval:'球域',axis_position_interval:'轴位置',axis_displacement_interval:'轴位移',radial_distance_interval:'径向',axis_angle_interval:'轴夹角',angular_displacement_interval:'角位移',gripper_interval:'夹爪'};
+  const short={gripper_pair_max_interval:'双夹爪max',window_direction_cone:'多帧方向',motion_direction_cone:'方向',point_distance_interval:'球域',axis_position_interval:'轴位置',axis_displacement_interval:'轴位移',radial_distance_interval:'径向',axis_angle_interval:'轴夹角',angular_displacement_interval:'角位移',gripper_interval:'夹爪'};
   const W=640,L=48,R=15,H=groups.size*22+12,n=d.frames,x=f=>L+f/Math.max(n-1,1)*(W-L-R);
   let svg=`<svg viewBox="0 0 ${W} ${H}" aria-label="各约束激活帧，可点击选择">`;
   let row=0;
   for(const list of groups.values()){
-    const y=6+row++*22,c=list[0].c;svg+=`<text x="${L-5}" y="${y+10}" text-anchor="end" class="lane-label">${constraintArm(c)==='left'?'左':'右'}·${short[c.type]}</text><line x1="${L}" x2="${W-R}" y1="${y+6}" y2="${y+6}" class="grid"/>`;
+    const y=6+row++*22,c=list[0].c;svg+=`<text x="${L-5}" y="${y+10}" text-anchor="end" class="lane-label">${constraintArm(c)==='both'?'双':constraintArm(c)==='left'?'左':'右'}·${short[c.type]}</text><line x1="${L}" x2="${W-R}" y1="${y+6}" y2="${y+6}" class="grid"/>`;
     for(const {c,i} of list)for(const run of frameRuns(c.active_frames)){
       const a=Math.max(L,x(run[0]-.5)),b=Math.min(W-R,x(run[1]+.5)),selected=i===state.constraint,invalid=c.active_frames.some(f=>isViolation(c,f));
       svg+=`<rect data-constraint="${i}" x="${a}" y="${y}" width="${Math.max(3,b-a)}" height="13" rx="2" fill="${invalid?'#ff8e8e':constraintArm(c)==='left'?'#76b8ff':'#83dfbf'}" fill-opacity="${selected?'.85':'.32'}" stroke="${selected?'#e1f9ed':'#56766c'}" stroke-width="${selected?'1.5':'.5'}" tabindex="0" role="button" aria-label="${escapeHTML(`${armName(c.subject)} ${kinds[c.type]} ${activationLabel(c)}`)}"><title>${escapeHTML(`${c.id} · ${activationLabel(c)}`)}</title></rect>`;
@@ -360,7 +362,7 @@ function renderCharts() {
   const d=state.detail;if(!d)return;followConstraint();
   $('frame-counter').textContent=`${state.frame} / ${d.frames-1}`;
   const arm=$('arm-select').value,mode=$('signal-kind').value,show=$('show-constraints').checked,c=selectedConstraint();
-  const arms=arm==='both'?['left','right']:[arm],matches=c&&arms.includes(constraintArm(c)),visible=show&&matches;
+  const arms=arm==='both'?['left','right']:[arm],matches=c&&armMatches(c,arm),visible=show&&matches;
   const series=[],options={label:'参考末端位置'},projection=positionBands(matches?c:null,d);
   let note='';
   if(mode==='feature'&&c){
@@ -375,7 +377,7 @@ function renderCharts() {
       $('signal-legend').innerHTML=arms.map(a=>`<span><i style="background:${a==='left'?'#76b8ff':'#83dfbf'}"></i>${armName(a)}</span>`).join('');
       options.minSpan=.1;options.label='参考夹爪指令';
       if(visible&&c.type==='gripper_interval'){options.bands=[{bounds:c.parameters.bounds,frames:c.active_frames}];if(arms.length===1)options.constraint=c;}
-      note='夹爪 0 为闭合，1 为打开；色带仅适用于所选约束的机械臂。';
+      note=c?.type==='gripper_pair_max_interval'?'联合约束作用于双手开度的最大值；切换「所选约束量」查看精确允许范围。':'夹爪 0 为闭合，1 为打开；色带仅适用于所选约束的机械臂。';
     }else{
       $('signal-legend').innerHTML=['X','Y','Z'].map((a,i)=>`<span><i style="background:${colors[i]}"></i>${a}</span>`).join('')+(arms.length===2?'<span>实线左臂 / 虚线右臂</span>':'');
       options.bands=visible?projection.bands:[];note=projection.note;

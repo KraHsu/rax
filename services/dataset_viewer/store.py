@@ -24,7 +24,10 @@ def read_json(path, default=None):
 
 def feature_curve(handle, constraint):
     """Plot a primitive over the whole reference, keeping its original anchor."""
-    c = constraint; arm = c['subject'].split('_')[0]; p = c['parameters']
+    c = constraint
+    if c['type'] == 'gripper_pair_max_interval':
+        return np.maximum(*[np.asarray(handle[f'endpose/{arm}_gripper']).reshape(-1) for arm in ('left', 'right')])
+    arm = c['subject'].split('_')[0]; p = c['parameters']
     pose = np.asarray(handle[f'endpose/{arm}_endpose']); frame = c['reference_frame']
     basis = rotation(frame['quaternion_wxyz']); kind = c['type']
     if kind == 'window_direction_cone':
@@ -155,7 +158,7 @@ class Dataset:
                     values = feature_curve(h, c); active = reference_values(h, c)
                     lo, hi = c['parameters']['bounds']
                     c.update(values=values.tolist(), active_frames=indices,
-                             unit='fraction' if c['type'] == 'gripper_interval' else 'rad' if 'angle' in c['type'] or 'angular' in c['type'] else 'm',
+                             unit='fraction' if c['type'] in ('gripper_interval', 'gripper_pair_max_interval') else 'rad' if 'angle' in c['type'] or 'angular' in c['type'] else 'm',
                              reference_violation=float(np.maximum(lo-active, 0).max()+np.maximum(active-hi, 0).max()))
                     constraints.append(c)
                 scene = json.loads(h['initial_scene/json'][()]) if 'initial_scene/json' in h else None
@@ -176,7 +179,7 @@ class Dataset:
     def frame(self, task, index, frame, camera, width=640):
         if camera not in ('head_camera', 'front_camera', 'left_camera', 'right_camera'): raise ValueError('Unknown camera')
         if not 64 <= width <= 960 or frame < 0: raise ValueError('Invalid frame request')
-        path = self.episode_path(task, index)
+        self.episode_path(task, index)  # Validate task/index before consulting the cache.
         # Image bytes are immutable across constraint revisions and publication.
         def load():
             with h5py.File(self.episode_path(task, index), 'r') as h:

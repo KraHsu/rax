@@ -23,7 +23,7 @@ DEFAULT_PROTOCOL = dict(version=1, confidence=.95, maximum_scene_failure_risk=.1
                         minimum_accepted_execution_fraction=.8,
                         minimum_crafted_families=3, maximum_rules=24, maximum_rule_growth=8,
                         require_zero_observed_false_accepts=True)
-ACTIVATION_FIELDS = ('selector', 'subjects', 'start_anchor', 'required')
+ACTIVATION_FIELDS = ('selector', 'subjects', 'start_anchor', 'required', 'reference_phase')
 SOURCES = ('expert', 'crafted', 'model')
 GRIPPER_HYPOTHESIS_FAMILIES = {
     'gripper_timing': 'legacy gripper timing or state',
@@ -265,6 +265,23 @@ def propose_revision(parent, patch, development, *, protocol=None):
     for op in patch['operations']:
         if not isinstance(op, dict):
             raise ValueError('Only data-only revision operations are allowed')
+        if op.get('op') == 'replace_pregrasp_gripper_with_pair':
+            if set(op) != {'op', 'rule_ids', 'joint_rule'} or not isinstance(op['rule_ids'], list) or not op['rule_ids'] or len(set(op['rule_ids'])) != len(op['rule_ids']):
+                raise ValueError('Joint migration requires explicit unique existing rule IDs and one joint rule')
+            joint = copy.deepcopy(op['joint_rule'])
+            if joint.get('type') != 'gripper_pair_max_interval' or joint.get('id') in {r['id'] for r in revised['rules']}:
+                raise ValueError('Joint migration requires a new pair-max rule')
+            for identifier in op['rule_ids']:
+                matches = [r for r in revised['rules'] if r['id'] == identifier]
+                if (len(matches) != 1 or matches[0]['type'] != 'gripper_interval' or 'reference_phase' in matches[0]
+                        or matches[0]['selector'] != {'kind': 'gripper_plateaus', 'state': 'all', 'after': 'episode_start'}):
+                    raise ValueError('Only original all-gripper plateaus can transfer their pre-boundary masks')
+                # All post-boundary fields, units, margins and scales remain identical.
+                # Instantiation proves removed preframes have effective joint coverage.
+                matches[0]['reference_phase'] = 'after_joint_closed'
+            revised['rules'].append(joint)
+            validate_template(revised)
+            continue
         if op.get('op') == 'set_coverage_policy':
             if set(op) != {'op', 'policy'} or coverage_edit or not isinstance(op['policy'], dict):
                 raise ValueError('Coverage policy must be one explicit data-only parameter object')
@@ -276,7 +293,7 @@ def propose_revision(parent, patch, development, *, protocol=None):
             coverage_edit = True
             continue
         if set(op) != {'op', 'rule'} or op['op'] not in ('add_rule', 'replace_rule'):
-            raise ValueError('Only data-only add_rule/replace_rule/set_coverage_policy operations are allowed')
+            raise ValueError('Only whitelisted data-only rule/coverage/joint-migration operations are allowed')
         rule = copy.deepcopy(op['rule'])
         matches = [i for i, existing in enumerate(revised['rules']) if existing['id'] == rule.get('id')]
         if op['op'] == 'add_rule':
@@ -301,6 +318,28 @@ def propose_revision(parent, patch, development, *, protocol=None):
                 template_sha256=template_hash(revised), patch=patch, protocol=p,
                 development_report_sha256=json_hash(development),
                 complexity=dict(parent_rules=len(parent['rules']), rules=len(revised['rules']), added_rules=growth))
+
+
+
+def joint_gripper_proposal(parent, development, *, rule_ids, lower_margin=.25, protocol=None):
+    """Hypothesis-only transfer of pre-boundary arm plateaus to a pair max.
+
+    The caller supplies verified development successes and failures; their
+    existence motivates expressivity, not a claim that this set means success.
+    """
+    rows = development['rows']
+    if not any(eligible(r) and r['native_success'] for r in rows) or not any(eligible(r) and not r['native_success'] for r in rows):
+        raise ValueError('Joint proposal needs verified development successes and failures')
+    joint = dict(id='rsi_joint_gripper_reference_before_joint_closed', type='gripper_pair_max_interval',
+                 subjects='both_grippers', selector=dict(kind='joint_gripper_plateaus', state='before_joint_closed', after='episode_start'),
+                 origin='world', orientation='world', parameters={},
+                 allowed_margin=dict(lower=lower_margin, upper=1., unit='fraction'),
+                 rationale='Development hypothesis: max of two reference-normalized gripper openings permits either hand to close early while excluding both-closed commands in reference pre-boundary plateaus. This is not physical grasp proof; independent native holdout remains required.')
+    patch = dict(version=VERSION, base_template_sha256=template_hash(parent),
+                 reason='Cross-arm recombination requires a joint allowed set; preserve all post-boundary arm constraints.',
+                 evidence_ids=[r['trial_id'] for r in rows if eligible(r)],
+                 operations=[dict(op='replace_pregrasp_gripper_with_pair', rule_ids=list(rule_ids), joint_rule=joint)])
+    return propose_revision(parent, patch, development, protocol=protocol)
 
 
 def gripper_phase_proposal(parent, development, *, protocol=None):

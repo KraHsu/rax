@@ -15,12 +15,12 @@ from services.robotwin.constraint_schema import KINDS, SCHEMA_VERSION, keys, rea
 from services.robotwin.full_trajectory import complete_constraints, validate_coverage_policy
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
-SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum')
+SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum', 'joint_gripper_plateaus')
 GRIPPER_PLATEAU_EPSILON = 1e-6
 
 
 def margin_unit(kind):
-    if kind == 'gripper_interval':
+    if kind in ('gripper_interval', 'gripper_pair_max_interval'):
         return 'fraction', 1.
     if kind in ('axis_angle_interval', 'angular_displacement_interval'):
         return 'rad', math.pi
@@ -69,12 +69,14 @@ def validate_template(t):
     ids = set()
     for r in t['rules']:
         keys(r, ('id', 'type', 'subjects', 'selector', 'origin', 'orientation', 'parameters', 'rationale'),
-             ('start_anchor', 'required', 'allowed_margin'))
+             ('start_anchor', 'required', 'allowed_margin', 'reference_phase'))
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids:
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
-        if r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone') or r['subjects'] not in ('active_arms', 'left', 'right'):
+        if r['type'] not in KINDS or r['type'] in ('motion_direction_cone', 'window_direction_cone') or r['subjects'] not in ('active_arms', 'left', 'right', 'both_grippers'):
             raise ValueError('Unsupported primitive or subject')
+        if (r['subjects'] == 'both_grippers') != (r['type'] == 'gripper_pair_max_interval'):
+            raise ValueError('Pair max requires exactly both_grippers')
         allowed_margin(r, 0.)
         if not isinstance(r['rationale'], str) or not r['rationale']:
             raise ValueError('Explain the selected feature')
@@ -99,7 +101,7 @@ def validate_template(t):
             raise ValueError('Unsupported selector; absolute frame numbers are forbidden')
         fields = {'kind'}
         if kind == 'events': fields.update(('direction', 'occurrence'))
-        if kind == 'gripper_plateaus': fields.update(('state', 'after'))
+        if kind in ('gripper_plateaus', 'joint_gripper_plateaus'): fields.update(('state', 'after'))
         if kind == 'position_extremum': fields.update(('axis', 'which', 'after'))
         keys(s, fields)
         if kind == 'events' and (s['direction'] not in ('increasing', 'decreasing', 'any') or s['occurrence'] not in ('all', 'first', 'last')):
@@ -108,6 +110,14 @@ def validate_template(t):
             raise ValueError('Invalid plateau state')
         if 'after' in s and s['after'] not in ('episode_start', 'first_close', 'last_close'):
             raise ValueError('Invalid selection anchor')
+        if kind == 'joint_gripper_plateaus' or r['type'] == 'gripper_pair_max_interval':
+            if (r['type'] != 'gripper_pair_max_interval' or s != {'kind': 'joint_gripper_plateaus', 'state': 'before_joint_closed', 'after': 'episode_start'}
+                    or r['origin'] != 'world' or r['orientation'] != 'world' or not r.get('required', True)):
+                raise ValueError('Pair max uses fixed required reference-before-joint-closed plateaus and identity frame')
+        if 'reference_phase' in r:
+            if (r['reference_phase'] != 'after_joint_closed' or r['type'] != 'gripper_interval'
+                    or s != {'kind': 'gripper_plateaus', 'state': 'all', 'after': 'episode_start'}):
+                raise ValueError('reference_phase only clips existing all-gripper plateaus after joint closure')
         if kind == 'position_extremum':
             vector(s['axis'], 3, unit=True)
             if s['which'] not in ('min', 'max'): raise ValueError('Invalid extremum')
@@ -188,6 +198,30 @@ def selections(selector, arm):
             for lo, hi in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)) if hi-lo >= 2]
 
 
+
+def joint_gripper_windows(arms):
+    """Reference-only max plateaus before the first stable common full closure.
+
+    Max can stay constant while the other hand ramps; that freedom is intended.
+    This reference boundary is not a claim about physical contact or grasp time.
+    """
+    grips = np.stack([arms[a]['grip'] for a in ('left', 'right')], -1)
+    closed = (np.abs(grips) <= GRIPPER_PLATEAU_EPSILON).all(-1)
+    starts = np.flatnonzero(closed[:-1] & closed[1:])
+    if not len(starts):
+        raise OutsideTemplate('Missing stable reference joint-closed boundary')
+    boundary = int(starts[0]); values = grips.max(-1)
+    windows = []; lo = 0
+    for index in range(1, boundary+1):
+        if index == boundary or abs(values[index]-values[lo]) > GRIPPER_PLATEAU_EPSILON:
+            if index-lo >= 2:
+                windows.append(dict(mode='interval', start=lo, end=index))
+            lo = index
+    return windows, dict(first_joint_closed_stable=boundary, epsilon=GRIPPER_PLATEAU_EPSILON,
+                        minimum_stable_frames=2, plateau_feature='max(left_open_fraction,right_open_fraction)',
+                        activation_source='reference_only', windows=copy.deepcopy(windows))
+
+
 def instantiate(handle, template):
     """Return validated constraints and an audit; never copy another episode's bounds."""
     validate_template(template)
@@ -196,19 +230,35 @@ def instantiate(handle, template):
     if meta['task'] != template['task']: raise OutsideTemplate('Task mismatch')
     if signature not in template['signatures']: raise OutsideTemplate(f'Unreviewed event signature: {signature}')
     constraints = []; thash = template_hash(template)
+    uses_joint = any(r['type'] == 'gripper_pair_max_interval' or 'reference_phase' in r for r in template['rules'])
+    joint_windows, joint_audit = joint_gripper_windows(arms) if uses_joint else ([], None)
+    removed = []; retained = []
     for rule in template['rules']:
         subjects = [a for a in arms if arms[a]['active']] if rule['subjects'] == 'active_arms' else [rule['subjects']]
         selected_count = 0
         for subject in subjects:
-            arm = arms[subject]
-            try: windows = selections(rule['selector'], arm)
+            pair = rule['type'] == 'gripper_pair_max_interval'
+            arm = arms['left'] if pair else arms[subject]
+            try: windows = copy.deepcopy(joint_windows) if pair else selections(rule['selector'], arm)
             except OutsideTemplate:
                 if rule.get('required', True): raise
                 windows = []
+            original_windows = {}
+            if 'reference_phase' in rule:
+                boundary = joint_audit['first_joint_closed_stable']
+                clipped = []
+                for w in windows:
+                    removed.extend((rule['id'], subject, i) for i in range(max(1, w['start']), min(w['end'], boundary)))
+                    if w['end'] > boundary:
+                        v = dict(w, start=max(w['start'], boundary)); clipped.append(v)
+                        original_windows[(v['start'], v['end'])] = w
+                        retained.append(dict(rule_id=rule['id'], subject=subject, activation=v))
+                windows = clipped
             for window in windows:
                 selected_count += 1
                 # A reference event's frame, not the preceding threshold sample.
-                lo = window.get('event', {}).get('frame', window['start']); hi = window['end']-1
+                bounds_window = original_windows.get((window['start'], window['end']), window)
+                lo = bounds_window.get('event', {}).get('frame', bounds_window['start']); hi = bounds_window['end']-1
                 origin = [0., 0., 0.] if rule['origin'] == 'world' else arm['pose'][lo if rule['origin'] == 'selection_start' else hi, :3].tolist()
                 quat = [1., 0., 0., 0.] if rule['orientation'] == 'world' else arm['pose'][lo, 3:].tolist()
                 quat = (np.asarray(quat)/np.linalg.norm(quat)).tolist()
@@ -218,9 +268,9 @@ def instantiate(handle, template):
                     if activation['start'] > lo: raise OutsideTemplate('Displacement anchor is after selection')
                     if activation['start'] == hi == lo: raise OutsideTemplate('Zero-length displacement has no training signal')
                 kind = rule['type']
-                scale = POLICY['gripper_margin'] if kind == 'gripper_interval' else (
+                scale = POLICY['gripper_margin'] if kind in ('gripper_interval', 'gripper_pair_max_interval') else (
                     POLICY['angle_margin_rad'] if kind in ('axis_angle_interval', 'angular_displacement_interval') else POLICY['position_margin_m'])
-                c = {'id': f'{rule["id"]}_{subject}_{lo}_{hi}', 'type': kind, 'subject': subject+'_eef',
+                c = {'id': f'{rule["id"]}_{subject}_{lo}_{hi}', 'type': kind, 'subject': subject if pair else subject+'_eef',
                      'reference_frame': {'origin_m': origin, 'quaternion_wxyz': quat},
                      'parameters': dict(rule['parameters'], bounds=[0., 0.]), 'activation': activation,
                      'penalty': {'kind': 'squared_hinge', 'scale': scale, 'weight': 1.},
@@ -230,17 +280,30 @@ def instantiate(handle, template):
                                       + rule['rationale'] + ' Bounds are recomputed from this reference with explicit operator margins; '
                                       'not a physically calibrated feasible region or proof of contact/grasp/support. '
                                       'Displacement requires its original start anchor in the training chunk.'}}
+                # Preserve the original platform's numerical set when clipping
+                # its activation, including tiny within-epsilon reference drift.
+                original_activation = c['activation']
+                c['activation'] = bounds_window if original_windows else original_activation
                 values = reference_values(handle, c)
+                c['activation'] = original_activation
                 lower_margin, upper_margin = allowed_margin(rule, scale)
                 lower, upper = float(values.min()-lower_margin), float(values.max()+upper_margin)
-                if kind in ('point_distance_interval', 'radial_distance_interval', 'gripper_interval', 'axis_angle_interval', 'angular_displacement_interval'):
+                if kind in ('point_distance_interval', 'radial_distance_interval', 'gripper_interval', 'gripper_pair_max_interval', 'axis_angle_interval', 'angular_displacement_interval'):
                     lower = max(0., lower)
-                if kind == 'gripper_interval': upper = min(1., upper)
+                if kind in ('gripper_interval', 'gripper_pair_max_interval'): upper = min(1., upper)
                 if kind in ('axis_angle_interval', 'angular_displacement_interval'): upper = min(math.pi, upper)
                 c['parameters']['bounds'] = [lower, upper]
                 constraints.append(c)
         if selected_count == 0 and rule.get('required', True): raise OutsideTemplate(f'Missing selection for {rule["id"]}')
-    if not constraints or len(constraints) > 128 or not any(c['type'] != 'gripper_interval' for c in constraints):
+    if removed:
+        covered = {i for c in constraints if c['type'] == 'gripper_pair_max_interval' and c['parameters']['bounds'][0] > 0
+                   for i in range(max(1, c['activation']['start']), c['activation']['end'])}
+        missing = sorted({i for _, _, i in removed}-covered)
+        if missing:
+            raise OutsideTemplate(f'Joint replacement leaves removed reference frames uncovered: {missing}')
+    if joint_audit is not None:
+        joint_audit.update(replaced_pre_frames=[dict(rule_id=r, subject=a, frame=i) for r,a,i in removed], retained_post_windows=retained)
+    if not constraints or len(constraints) > 128 or not any(c['type'] not in ('gripper_interval', 'gripper_pair_max_interval') for c in constraints):
         raise OutsideTemplate('Need 1..128 constraints with at least one geometric feature')
     constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'],
                                                 policy=template.get('coverage_policy'))
@@ -248,7 +311,8 @@ def instantiate(handle, template):
     validate_bundle(generated, len(arms['left']['grip']))
     audit = validate_reference_bounds(generated, handle)
     return constraints, {'template_sha256': thash, 'signature': signature, 'policy': POLICY,
-                         'reference_audit': audit, 'coverage': coverage}
+                         'reference_audit': audit, 'coverage': coverage,
+                         **({'joint_gripper_reference': joint_audit} if uses_joint else {})}
 
 
 def instantiate_review(review_path, template):

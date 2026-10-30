@@ -67,7 +67,7 @@ def test_live_publication_and_distinct_scenes(dataset):
     assert dataset.episode('adjust_bottle', 1)['annotated']
 
 
-@pytest.mark.parametrize('kind', [k for k in KINDS if k not in ('motion_direction_cone', 'window_direction_cone')])
+@pytest.mark.parametrize('kind', [k for k in KINDS if k not in ('motion_direction_cone', 'window_direction_cone', 'gripper_pair_max_interval')])
 @pytest.mark.parametrize('mode', ['interval', 'endpoint', 'reference_event'])
 def test_all_frame_curves_match_training_feature_with_original_anchor(dataset, kind, mode):
     c = copy.deepcopy(dataset.episode('adjust_bottle', 0)['constraints'][0])

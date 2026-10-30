@@ -37,6 +37,11 @@ def rotation(q):
 
 def reference_values(handle, constraint):
     c = constraint; a = c['activation']; p = c['parameters']
+    if c['type'] == 'gripper_pair_max_interval':
+        if c['subject'] != 'both_grippers' or a['mode'] != 'interval':
+            raise ValueError('Pair max requires both_grippers and fixed interval')
+        grips = [np.asarray(handle[f'endpose/{arm}_gripper']).reshape(-1) for arm in ('left', 'right')]
+        return np.maximum(*grips)[a['start']:a['end']]
     arm = c['subject'].split('_')[0]
     pose = np.asarray(handle[f'endpose/{arm}_endpose'])
     grip = np.asarray(handle[f'endpose/{arm}_gripper']).reshape(-1)
