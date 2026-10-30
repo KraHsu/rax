@@ -112,3 +112,16 @@ test('frame following respects signal type, arm filter, and pinned selection',as
   elements.get('follow-constraints').checked=false;await api.setFrame(5,false);assert.equal(api.state.constraint,0);assert.ok(elements.get('overlay-status').innerHTML.includes('当前未激活'));
   api.selectConstraint(1);assert.equal(elements.get('signal-kind').value,'feature');assert.ok(elements.get('spatial-chart').innerHTML.includes('constraint-geometry'));
 });
+
+test('rigid local marker uses physical rotated point and suppresses raw EEF bands',()=>{
+  const {api}=harness(),d=data(),c=constraint('axis_displacement_interval',{axis:[1,0,0],bounds:[-.25,.25],local_point:{frame:'subject_eef',offset_m:[.2,0,0]}});
+  d.arms.left.pose[2]=[1,2,3,1,0,0,0];
+  d.arms.left.pose[4]=[1,2,3,Math.SQRT1_2,0,0,Math.SQRT1_2];
+  assert.equal(api.positionBands(c,d).bands.length,0);
+  assert.match(api.positionBands(c,d).note,/局部固定点/);
+  const g=api.spatialGeometry(c,d,4),arrow=g.arrows.find(a=>a.role==='actual');
+  near3(arrow.start,[1,2,3]);near3(arrow.end,[1,2.2,3]);
+  for(const [i,line]of g.lines.slice(0,2).entries())for(const p of line.points)near(p[0],[.95,1.45][i]);
+  assert.match(g.note,/不表示物体接触/);
+  c.parameters.local_point.offset_m=[0,0,0];assert.equal(api.positionBands(c,d).bands.length,1);
+});

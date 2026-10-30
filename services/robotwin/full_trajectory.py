@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 
+from services.robotwin.annotation import constraint_positions
 from services.robotwin.constraint_coverage import coverage_masks, coverage_report, runs
 
 PREFIX = '__full_motion_v2__'
@@ -62,7 +63,7 @@ def complete_constraints(handle, constraints, recording_id, *, policy=None):
         pose = np.asarray(handle[f'endpose/{arm}_endpose'][a['start']], dtype=float)
         c['parameters']['anchor'] = 'reference_frame'
         if c['type'] == 'axis_displacement_interval':
-            c['reference_frame']['origin_m'] = pose[:3].tolist()
+            c['reference_frame']['origin_m'] = constraint_positions(pose, c['parameters']).tolist()
         else:
             c['reference_frame']['quaternion_wxyz'] = (pose[3:]/np.linalg.norm(pose[3:])).tolist()
         c['evidence']['rationale'] += (

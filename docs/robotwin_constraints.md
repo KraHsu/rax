@@ -342,3 +342,8 @@ corrected attempts use a separate physical artifact directory.
 Future policy comparisons must use and report the same controller/frame adapter
 for both baseline and candidate models. A partial score collected under the
 legacy adapter cannot establish the effect of constraint supervision by itself.
+
+Schema 1.5 optionally evaluates position/distance primitives on a [fixed EEF-local
+marker](robotwin_local_point.md), `x=p+Rr`. Its explicit frame, units and source
+identity travel in the embedded annotation; old omitted/zero offsets keep the
+position-only behavior.

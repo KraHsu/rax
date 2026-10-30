@@ -35,6 +35,21 @@ def rotation(q):
                      2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)), -1).reshape(q.shape[:-1]+(3, 3))
 
 
+def constraint_positions(pose, parameters):
+    """World coordinates of a fixed local marker; omitted/zero offset is legacy p."""
+    pose = np.asarray(pose)
+    point = parameters.get('local_point')
+    if point is None or not any(point['offset_m']):
+        return pose[..., :3]
+    q = np.asarray(pose[..., 3:], dtype=float)
+    # Preserve measured-quaternion validation, then match the reader's physical
+    # unit quaternion. This normalization is only for the new nonzero marker;
+    # legacy angle features and position-only/zero-offset paths are unchanged.
+    rotation(q)
+    q = q / np.linalg.norm(q, axis=-1, keepdims=True)
+    return pose[..., :3] + rotation(q) @ np.asarray(point['offset_m'])
+
+
 def reference_values(handle, constraint):
     c = constraint; a = c['activation']; p = c['parameters']
     if c['type'] == 'gripper_pair_max_interval':
@@ -70,9 +85,10 @@ def reference_values(handle, constraint):
         r = origin.T @ rotation(pose[indices, 3:])
         skew = np.stack((r[:, 2, 1]-r[:, 1, 2], r[:, 0, 2]-r[:, 2, 0], r[:, 1, 0]-r[:, 0, 1]), -1)
         return np.arctan2(np.linalg.norm(skew, axis=-1)*.5, (np.trace(r, axis1=-2, axis2=-1)-1)*.5)
-    origin = (pose[a['start'], :3] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
+    positions = constraint_positions(pose, p)
+    origin = (positions[a['start']] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
               else np.asarray(frame['origin_m']))
-    delta = pose[indices, :3]-origin
+    delta = positions[indices]-origin
     if kind == 'point_distance_interval':
         return np.linalg.norm(delta, axis=-1)
     axis = basis @ np.asarray(p['axis']); axial = delta @ axis

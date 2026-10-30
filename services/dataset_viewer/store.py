@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
-from services.robotwin.annotation import reference_values, rotation, window_direction_values
+from services.robotwin.annotation import constraint_positions, reference_values, rotation, window_direction_values
 from services.robotwin.constraint_schema import read_embedded
 from services.robotwin.constraint_coverage import coverage_report
 
@@ -49,9 +49,10 @@ def feature_curve(handle, constraint):
         r = anchor.T @ rotation(pose[:, 3:])
         skew = np.stack((r[:,2,1]-r[:,1,2], r[:,0,2]-r[:,2,0], r[:,1,0]-r[:,0,1]), -1)
         return np.arctan2(np.linalg.norm(skew, axis=-1)*.5, (np.trace(r, axis1=-2, axis2=-1)-1)*.5)
-    origin = (pose[c['activation']['start'], :3] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
+    positions = constraint_positions(pose, p)
+    origin = (positions[c['activation']['start']] if kind == 'axis_displacement_interval' and p.get('anchor') != 'reference_frame'
               else np.asarray(frame['origin_m']))
-    delta = pose[:, :3]-origin
+    delta = positions-origin
     if kind == 'point_distance_interval': return np.linalg.norm(delta, axis=-1)
     axis = basis @ np.asarray(p['axis']); projected = delta @ axis
     if kind == 'radial_distance_interval': return np.linalg.norm(delta-projected[:, None]*axis, axis=-1)

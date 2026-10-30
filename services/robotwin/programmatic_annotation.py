@@ -11,8 +11,8 @@ import re
 
 import numpy as np
 
-from services.robotwin.annotation import reference_values, rotation, validate_reference_bounds
-from services.robotwin.constraint_schema import KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, vector
+from services.robotwin.annotation import constraint_positions, reference_values, rotation, validate_reference_bounds
+from services.robotwin.constraint_schema import KINDS, LOCAL_POINT_KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, validate_local_point, vector
 from services.robotwin.full_trajectory import complete_constraints, validate_coverage_policy
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
@@ -158,9 +158,11 @@ def validate_template(t):
             params.add('axis')
         if r['type'] == 'axis_angle_interval':
             params.update(('local_axis', 'reference_axis'))
-        keys(r['parameters'], params)
-        for value in r['parameters'].values():
-            vector(value, 3, unit=True)
+        keys(r['parameters'], params, ('local_point',) if r['type'] in LOCAL_POINT_KINDS else ())
+        for key in params:
+            vector(r['parameters'][key], 3, unit=True)
+        if 'local_point' in r['parameters']:
+            validate_local_point(r['parameters']['local_point'], r['type'])
         s = r['selector']; kind = s.get('kind') if isinstance(s, dict) else None
         if kind not in SELECTORS:
             raise ValueError('Unsupported selector; absolute frame numbers are forbidden')
@@ -327,7 +329,8 @@ def instantiate(handle, template):
                 # A reference event's frame, not the preceding threshold sample.
                 bounds_window = original_windows.get((window['start'], window['end']), window)
                 lo = bounds_window.get('event', {}).get('frame', bounds_window['start']); hi = bounds_window['end']-1
-                origin = [0., 0., 0.] if rule['origin'] == 'world' else arm['pose'][lo if rule['origin'] == 'selection_start' else hi, :3].tolist()
+                positions = constraint_positions(arm['pose'], rule['parameters'])
+                origin = [0., 0., 0.] if rule['origin'] == 'world' else positions[lo if rule['origin'] == 'selection_start' else hi].tolist()
                 quat = [1., 0., 0., 0.] if rule['orientation'] == 'world' else arm['pose'][lo, 3:].tolist()
                 quat = (np.asarray(quat)/np.linalg.norm(quat)).tolist()
                 activation = copy.deepcopy(window)
@@ -340,7 +343,7 @@ def instantiate(handle, template):
                     POLICY['angle_margin_rad'] if kind in ('axis_angle_interval', 'angular_displacement_interval') else POLICY['position_margin_m'])
                 c = {'id': f'{rule["id"]}_{subject}_{lo}_{hi}', 'type': kind, 'subject': subject if pair else subject+'_eef',
                      'reference_frame': {'origin_m': origin, 'quaternion_wxyz': quat},
-                     'parameters': dict(rule['parameters'], bounds=[0., 0.]), 'activation': activation,
+                     'parameters': dict(copy.deepcopy(rule['parameters']), bounds=[0., 0.]), 'activation': activation,
                      'penalty': {'kind': 'squared_hinge', 'scale': scale, 'weight': 1.},
                      'evidence': {'source': 'demonstration_analysis', 'status': 'accepted',
                          'report_id': bundle['provenance']['recording_id'],

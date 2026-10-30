@@ -155,3 +155,20 @@ fully-closed rules, and checks that every removed action frame is covered by an
 effective joint interval. Cite success and failure development evidence. The
 result remains a proposal until independent native validation; no union/max
 rule is automatically a physical success certificate.
+
+### Optional rigid local point (schema 1.5)
+
+For `axis_position_interval`, `radial_distance_interval`,
+`point_distance_interval` and `axis_displacement_interval` only, rule
+`parameters` may include `local_point={frame:"subject_eef", offset_m:[x,y,z],
+provenance:{source:"known_geometry"|"manual",reference:<source identifier>,
+sha256:<64 lowercase hex>,rationale:<geometric justification>}}`.
+This changes the supervised point to `p + R offset_m` in the decoded physical
+EEF frame. Never guess an offset from a task name or claim that a kinematic
+marker is a contact surface. The rule's existing selector remains reference-only
+(`position_extremum` still selects the EEF origin); selection-start/end origins
+and long-span fixed anchors are compiled from the reference marker. Omitted or
+zero offsets retain legacy behavior. Nonzero offsets require valid position and
+orientation at each supervised point and at its original displacement anchor.
+That anchor may be measured row zero, which is detached and not itself an action
+loss sample; a missing anchor is never replaced with a predicted one.

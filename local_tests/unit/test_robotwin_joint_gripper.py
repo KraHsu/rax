@@ -3,7 +3,7 @@ import copy
 import json
 import numpy as np
 import pytest
-from services.robotwin.constraint_schema import HDF5_KEY, validate_bundle, validate_constraint
+from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, validate_bundle, validate_constraint
 from services.robotwin.programmatic_annotation import instantiate, OutsideTemplate, validate_template
 from services.robotwin.annotation import reference_values
 from services.robotwin.constraint_coverage import coverage_report
@@ -142,5 +142,5 @@ def test_episode_recorder_embeds_joint_feature_with_full_motion_coverage(tmp_pat
     recorder.finish(success=True)
     with h5py.File(path) as f:
         bundle=read_embedded(f)
-        assert bundle['schema_version']=='1.4' and pair in bundle['constraints']
+        assert bundle['schema_version']==SCHEMA_VERSION and pair in bundle['constraints']
         assert coverage_report(bundle['constraints'],6)['complete']

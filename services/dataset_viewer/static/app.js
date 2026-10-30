@@ -45,9 +45,12 @@ function activeFeature(c,values) {
   const frames=new Set(c.active_frames);return values.map((v,f)=>frames.has(f)?v:null);
 }
 function worldAxis(c){return unit3(rotate3(c.reference_frame.quaternion_wxyz,c.parameters.axis||c.parameters.reference_axis));}
-function constraintOrigin(c,d){return c.type==='axis_displacement_interval'&&c.parameters.anchor!=='reference_frame'?d.arms[constraintArm(c)].pose[c.activation.start].slice(0,3):c.reference_frame.origin_m;}
+function hasLocalPoint(c){return c?.parameters.local_point?.offset_m.some(v=>v!==0);}
+function constraintPoint(c,pose){return hasLocalPoint(c)?add3(pose.slice(0,3),rotate3(pose.slice(3),c.parameters.local_point.offset_m)):pose.slice(0,3);}
+function constraintOrigin(c,d){return c.type==='axis_displacement_interval'&&c.parameters.anchor!=='reference_frame'?constraintPoint(c,d.arms[constraintArm(c)].pose[c.activation.start]):c.reference_frame.origin_m;}
 function positionBands(c,d) {
   if(!c)return {bands:[],note:''};
+  if(hasLocalPoint(c))return {bands:[],note:'此约束作用于随末端旋转的局部固定点 p + Rr；原始末端 XYZ 曲线不叠加它的允许带。精确范围见「所选约束量」，空间图的黄色箭头指向该固定点。'};
   const origin=constraintOrigin(c,d),[lo,hi]=c.parameters.bounds;
   if(c.type==='point_distance_interval')return {
     bands:[0,1,2].map(i=>({bounds:[origin[i]-hi,origin[i]+hi],color:colors[i],frames:c.active_frames})),
@@ -73,7 +76,7 @@ function spatialGeometry(c,d,f) {
   const geometry={lines:[],arrows:[],focus:[],note:''};
   if(!c||!isActive(c,f)){geometry.note=c?'所选约束当前未激活；点击生效区间或开启随帧切换。':'当前没有约束标注。';return geometry;}
   if(c.type==='gripper_pair_max_interval'){geometry.note='允许范围作用于 max(左夹爪开度,右夹爪开度)，不分别限制两手。';return geometry;}
-  const poses=d.arms[constraintArm(c)].pose,p=poses[f].slice(0,3),origin=constraintOrigin(c,d),[lo,hi]=c.parameters.bounds;
+  const poses=d.arms[constraintArm(c)].pose,p=constraintPoint(c,poses[f]),origin=constraintOrigin(c,d),[lo,hi]=c.parameters.bounds;
   const line=(points,role='allowed')=>{geometry.lines.push({points,role});geometry.focus.push(...points);};
   const arrow=(start,end,role='axis')=>{geometry.arrows.push({start,end,role});geometry.focus.push(start,end);};
   geometry.focus.push(p);
@@ -122,6 +125,10 @@ function spatialGeometry(c,d,f) {
     }
     geometry.note=`虚线为原始 F${c.activation.start} 朝向，实线为当前朝向。允许旋转角 ${fmt(lo*180/Math.PI,1)}–${fmt(hi*180/Math.PI,1)}° 由下方角位移曲线精确表示，不等同于分别约束三根轴。`;
   }else geometry.note='夹爪约束显示在动作曲线中；它是开合指令范围，不是末端位置区域。';
+  if(hasLocalPoint(c)){
+    arrow(poses[f].slice(0,3),p,'actual');
+    geometry.note+=' 约束量为局部固定点 p + Rr；金色箭头从末端原点指向该点，不表示物体接触。';
+  }
   return geometry;
 }
 
