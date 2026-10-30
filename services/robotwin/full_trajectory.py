@@ -18,9 +18,35 @@ POLICY = {'version': 3, 'objective': 'window_direction_with_segment_region_fallb
           'maximum_predicted_anchor_span': 32,
           'window_steps': 8, 'minimum_window_steps': 2, 'minimum_reference_progress_m': .005,
           'stationary_step_m': 1e-5, 'direction_slack_m': 1e-4, 'hold_margin_m': .02}
+# Search-budget priors, not empirically established feasible or safe limits.
+# Reference segmentation, activation and fallback selection are not tunable.
+COVERAGE_POLICY_BOUNDS = {'half_angle_rad': (math.radians(5), math.radians(85)),
+                          'hold_margin_m': (.001, .1), 'direction_slack_m': (0., .05)}
+PENALTY_SCALES_M = {'stationary': .02, 'direction': .005}
 
 
-def complete_constraints(handle, constraints, recording_id):
+def validate_coverage_policy(override):
+    """Validate only data-valued physical tolerances; never code or masking."""
+    if (not isinstance(override, dict) or not override
+            or set(override)-set(COVERAGE_POLICY_BOUNDS)):
+        raise ValueError('coverage_policy requires a nonempty subset of allowed physical tolerance keys')
+    for key, value in override.items():
+        low, high = COVERAGE_POLICY_BOUNDS[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f'coverage_policy {key} must be finite and in [{low}, {high}]')
+    return override
+
+
+def resolve_coverage_policy(override=None):
+    policy = copy.deepcopy(POLICY)
+    if override is not None:
+        policy.update(validate_coverage_policy(override))
+    return policy
+
+
+def complete_constraints(handle, constraints, recording_id, *, policy=None):
+    override = copy.deepcopy(policy)
+    policy = resolve_coverage_policy(override)
     result = [copy.deepcopy(c) for c in constraints if not c['id'].startswith((PREFIX, LEGACY_PREFIX))]
     length = len(handle['endpose/left_endpose'])
     if length < 2: raise ValueError('Full motion coverage needs at least two frames')
@@ -63,9 +89,9 @@ def complete_constraints(handle, constraints, recording_id):
                 frame = {'origin_m': [0., 0., 0.], 'quaternion_wxyz': [1., 0., 0., 0.]}
                 if stationary:
                     center = positions[start-1:end].mean(axis=0)
-                    radius = float(np.linalg.norm(positions[start:end]-center, axis=-1).max())+POLICY['hold_margin_m']
+                    radius = float(np.linalg.norm(positions[start:end]-center, axis=-1).max())+policy['hold_margin_m']
                     frame['origin_m'] = center.tolist(); kind = 'point_distance_interval'
-                    parameters = {'bounds': [0., radius]}; scale = POLICY['hold_margin_m']
+                    parameters = {'bounds': [0., radius]}; scale = PENALTY_SCALES_M['stationary']
                     rationale = 'Stationary reference interval: loose hold region, not per-frame position targets.'
                 else:
                     kind = 'window_direction_cone'
@@ -73,15 +99,15 @@ def complete_constraints(handle, constraints, recording_id):
                     # imitation target. Used only when the chunk cannot expose
                     # a sufficiently long, nontrivial reference displacement.
                     center = positions[start-1:end].mean(axis=0)
-                    radius = float(np.linalg.norm(positions[start-1:end]-center, axis=-1).max())+POLICY['hold_margin_m']
+                    radius = float(np.linalg.norm(positions[start-1:end]-center, axis=-1).max())+policy['hold_margin_m']
                     frame['origin_m'] = center.tolist()
-                    parameters = {'axis': axis.tolist(), 'half_angle_rad': POLICY['half_angle_rad'],
-                                  'bounds': [0., POLICY['direction_slack_m']],
+                    parameters = {'axis': axis.tolist(), 'half_angle_rad': policy['half_angle_rad'],
+                                  'bounds': [0., policy['direction_slack_m']],
                                   'window_steps': POLICY['window_steps'],
                                   'minimum_window_steps': POLICY['minimum_window_steps'],
                                   'minimum_reference_progress_m': POLICY['minimum_reference_progress_m'],
                                   'fallback_radius_m': radius}
-                    scale = .005
+                    scale = PENALTY_SCALES_M['direction']
                     rationale = ('Motion policy v3: broad 60-degree cone on up-to-8-step net EEF displacement, '
                                  'truncated at reference turn/stop segments and the chunk start. Windows under two '
                                  'steps or under 5 mm reference net movement use this entire segment\'s fixed '
@@ -89,6 +115,15 @@ def complete_constraints(handle, constraints, recording_id):
                                  'All switches depend only on reference data. Zero predicted movement is allowed '
                                  'by the direction branch; progress and task success are separate. Neither the '
                                  'cone nor fallback region is physically calibrated or a safety guarantee.')
+                    if policy != POLICY:
+                        rationale = (
+                            f'Motion policy v3 with explicit template tolerances: {math.degrees(policy["half_angle_rad"]):g}-degree '
+                            f'cone and {policy["direction_slack_m"]:g} m residual slack on up-to-8-step net EEF displacement. '
+                            'Reference turn/stop segmentation and short-window fallback selection remain fixed at the '
+                            f'default policy. Fallback is the fixed reference-segment sphere plus {policy["hold_margin_m"]:g} m. '
+                            'Zero predicted movement is allowed by the direction branch; success/progress are separate. '
+                            'With nonzero residual slack, a wider angle is not necessarily more permissive for tiny '
+                            'backward movements. Tolerances are not calibrated physical feasibility or safety limits.')
                 result.append({'id': f'{PREFIX}{arm}_{start}_{end}', 'type': kind, 'subject': arm+'_eef',
                     'reference_frame': frame, 'parameters': parameters,
                     'activation': {'mode': 'interval', 'start': start, 'end': end},
@@ -98,5 +133,10 @@ def complete_constraints(handle, constraints, recording_id):
                 start = end
     report = coverage_report(result, length)
     if not report['complete']: raise ValueError('Full motion coverage failed')
-    report['policy'] = POLICY
+    report['policy'] = policy
+    if override is not None:
+        report['coverage_override'] = override
+        report['reference_partition_policy'] = {key: POLICY[key] for key in (
+            'half_angle_rad', 'turn_margin_rad', 'stationary_step_m')}
+        report['penalty_scales_m'] = dict(PENALTY_SCALES_M)
     return result, report

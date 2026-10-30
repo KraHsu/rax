@@ -12,7 +12,7 @@ import numpy as np
 
 from services.robotwin.annotation import reference_values, rotation, validate_reference_bounds
 from services.robotwin.constraint_schema import KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, vector
-from services.robotwin.full_trajectory import complete_constraints
+from services.robotwin.full_trajectory import complete_constraints, validate_coverage_policy
 
 POLICY = {'position_margin_m': .005, 'angle_margin_rad': .0872664626, 'gripper_margin': .02}
 SELECTORS = ('events', 'gripper_plateaus', 'terminal', 'position_extremum')
@@ -49,7 +49,9 @@ def template_hash(template):
 
 
 def validate_template(t):
-    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'))
+    keys(t, ('version', 'task', 'rationale', 'signatures', 'rules'), ('coverage_policy',))
+    if 'coverage_policy' in t:
+        validate_coverage_policy(t['coverage_policy'])
     if (type(t['version']) is not int or t['version'] != 1 or not isinstance(t['task'], str) or not t['task']
             or not isinstance(t['rationale'], str) or not t['rationale']):
         raise ValueError('Invalid task template identity')
@@ -240,7 +242,8 @@ def instantiate(handle, template):
         if selected_count == 0 and rule.get('required', True): raise OutsideTemplate(f'Missing selection for {rule["id"]}')
     if not constraints or len(constraints) > 128 or not any(c['type'] != 'gripper_interval' for c in constraints):
         raise OutsideTemplate('Need 1..128 constraints with at least one geometric feature')
-    constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'])
+    constraints, coverage = complete_constraints(handle, constraints, bundle['provenance']['recording_id'],
+                                                policy=template.get('coverage_policy'))
     generated = dict(bundle, constraints=constraints, schema_version=SCHEMA_VERSION)
     validate_bundle(generated, len(arms['left']['grip']))
     audit = validate_reference_bounds(generated, handle)
