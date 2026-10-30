@@ -10,6 +10,7 @@ import numpy as np
 
 ALIGNMENT = 'reference_command_index_v1'
 SUCCESS_RULE = 'native_ever_success'
+BASE_FRAME_ADAPTER = 'urdf_fixed_arm_base_se3_v1'
 TRACKING = {'position_m': .005, 'rotation_rad': math.radians(5), 'gripper_fraction': .05}
 RELATIVE_TRACKING = {'position_m': .001, 'rotation_rad': math.radians(.5),
                      'gripper_fraction': .01, 'relative_fraction': .35}
@@ -194,6 +195,77 @@ def tracking_report(actual, commanded, *, baseline=None, reference=None, limits=
     return dict(realized=bool(realized), absolute=report, relative=relative, limits=limits,
                 relative_limits=dict(RELATIVE_TRACKING),
                 gripper_measurement='native_nominal_command_fraction_not_contact_force')
+
+
+def install_base_frame_adapter(native, *, install=True):
+    """Correct only this planner instance's omitted fixed arm-base rotation."""
+    import hashlib
+    import os
+    from pathlib import Path
+    import xml.etree.ElementTree as ET
+
+    import transforms3d as t3d
+    import yaml
+    robot = native.robot
+    if robot.communication_flag or robot.planner_backend != 'curobo':
+        raise ValueError('Probe supports only in-process cuRobo planners')
+    prepared, proof = [], {}
+    for arm in ('left', 'right'):
+        planner = getattr(robot, arm+'_planner')
+        if getattr(planner, '_rax_private_base_frame', False):
+            raise ValueError('Base-frame adapter already installed')
+        config_path = Path(planner.yml_path)
+        cfg = yaml.safe_load(config_path.read_text())['robot_cfg']['kinematics']
+        planner_urdf = Path(os.path.expandvars(cfg['urdf_path'])).resolve()
+        physical_urdf = Path(getattr(robot, arm+'_urdf_path')).resolve()
+        digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+        if digest(planner_urdf) != digest(physical_urdf):
+            raise ValueError('Planner and physics URDF differ')
+        urdf = ET.fromstring(physical_urdf.read_text())
+        joints = urdf.findall('joint')
+        roots = {n.get('name') for n in urdf.findall('link')} - {j.find('child').get('link') for j in joints}
+        matches = [j for j in joints if j.find('child').get('link') == cfg['base_link']]
+        if len(roots) != 1 or len(matches) != 1:
+            raise ValueError('Unsupported ambiguous URDF arm-base root chain')
+        joint = matches[0]
+        ee_name = getattr(robot, arm+'_ee_name')
+        ee_joints = [j for j in joints if j.get('name') == ee_name]
+        if len(ee_joints) != 1 or ee_joints[0].find('child').get('link') != cfg['ee_link']:
+            raise ValueError('Planner end link differs from the physics EEF joint child')
+        if joint.get('type') != 'fixed' or joint.find('parent').get('link') not in roots:
+            raise ValueError('Arm base must be a direct fixed child of the URDF root')
+        origin = joint.find('origin')
+        if origin is None:
+            raise ValueError('Fixed arm base lacks an explicit transform')
+        xyz = np.fromstring(origin.get('xyz', '0 0 0'), sep=' ')
+        rpy = np.fromstring(origin.get('rpy', '0 0 0'), sep=' ')
+        if xyz.shape != (3,) or rpy.shape != (3,) or not np.isfinite(np.r_[xyz, rpy]).all():
+            raise ValueError('Invalid fixed arm-base transform')
+        bias = np.asarray(planner.frame_bias, dtype=float)
+        if bias.shape != (3,) or not np.allclose(xyz, -bias, rtol=0, atol=1e-8):
+            raise ValueError('Native frame_bias does not match the fixed URDF translation')
+        rotation = t3d.euler.euler2mat(*rpy, axes='sxyz')
+        original = planner._trans_from_world_to_base
+        def corrected(base_pose, target_pose, _original=original, _rotation=rotation, _bias=bias.copy()):
+            p_root, q_root = _original(base_pose, target_pose)
+            # Native plan_path subsequently adds frame_bias. Return the value
+            # before that addition, so it is applied exactly once.
+            position = _rotation.T @ (np.asarray(p_root)+_bias)-_bias
+            orientation = t3d.quaternions.mat2quat(_rotation.T @ t3d.quaternions.quat2mat(q_root))
+            return position, orientation
+        prepared.append((planner, corrected))
+        proof[arm] = dict(physics_urdf_path=str(physical_urdf), physics_urdf_sha256=digest(physical_urdf),
+                         planner_urdf_path=str(planner_urdf), planner_urdf_sha256=digest(planner_urdf),
+                         planner_yaml=str(config_path), planner_yaml_sha256=digest(config_path),
+                         root_link=next(iter(roots)), arm_base=cfg['base_link'], fixed_joint=joint.get('name'),
+                         ee_link=cfg['ee_link'], ee_joint=ee_name,
+                         xyz=xyz.tolist(), rpy=rpy.tolist(), frame_bias=bias.tolist(),
+                         rotation=rotation.tolist(), quaternion_order='wxyz')
+    if install:
+        for planner, corrected in prepared:
+            planner._trans_from_world_to_base = corrected
+            planner._rax_private_base_frame = True
+    return dict(version=BASE_FRAME_ADAPTER, arms=proof)
 
 
 def replay(native, commanded):

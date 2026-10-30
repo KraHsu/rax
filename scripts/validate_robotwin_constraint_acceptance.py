@@ -22,7 +22,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from services.robotwin.acceptance_replay import (  # noqa: E402
-    ALIGNMENT, SUCCESS_RULE, TRACKING, arrays, default_cases, intervene,
+    ALIGNMENT, SUCCESS_RULE, TRACKING, BASE_FRAME_ADAPTER, arrays, default_cases, intervene, install_base_frame_adapter,
     replay, sample, samples_to_trajectory, tracking_report,
 )
 from services.robotwin.collection import atomic_json, initial_scene, scene_fingerprint  # noqa: E402
@@ -82,6 +82,10 @@ class TraceHandle(dict):
     """In-memory structural adapter for the existing numeric template engine."""
 
 
+class ReplayAdapterError(ValueError):
+    """An unsupported robot is not a scene rejection to retry at another seed."""
+
+
 def reference_bundle(template, trajectory, seed, fingerprint):
     # Existing template math accepts only the training schema. That schema is
     # used for this in-memory structural adapter, then discarded: the artifact
@@ -110,6 +114,10 @@ def capture_reference(factory, template, seed, excluded_scenes):
     native = factory(seed)
     started = time.monotonic()
     try:
+        try:
+            adapter = install_base_frame_adapter(native, install=False)
+        except Exception as exc:
+            raise ReplayAdapterError(f'Unsupported replay robot/assets: {exc}') from exc
         scene = initial_scene(native)
         fingerprint = scene_fingerprint(scene)
         if fingerprint in excluded_scenes:
@@ -124,6 +132,7 @@ def capture_reference(factory, template, seed, excluded_scenes):
         bundle, audit = reference_bundle(template, trajectory, seed, fingerprint)
         source_hash = json_digest(dict(scene=scene, trajectory=trajectory))
         return dict(bundle=bundle, trajectory=trajectory, template_audit=audit, initial_scene=scene,
+                    replay_adapter=adapter, replay_adapter_applied=False,
                     provenance=dict(task=template['task'], seed=seed, scene_sha256=fingerprint,
                                     mode='demo_clean', split='validation', source_episode_sha256=source_hash,
                                     recording_method='native_expert_save_freq_trace_no_images'),
@@ -140,6 +149,7 @@ def planned_trials(references, baseline_repeats, cases):
 
 def verify_plan(manifest, config, exclusions, template, output):
     """A resumed plan must still represent the exact preregistered experiment."""
+    from services.robotwin.acceptance import derived_values_equal
     for key in ('task', 'template_sha256', 'annotation_policy_sha256', 'native_commit', 'alignment', 'native_success_rule'):
         if manifest[key] != config[key]:
             raise ValueError(f'Manifest/configuration mismatch: {key}')
@@ -158,6 +168,10 @@ def verify_plan(manifest, config, exclusions, template, output):
         path = (output/entry['path']).resolve()
         if not path.is_relative_to(output.resolve()) or digest(path) != entry['sha256']:
             raise ValueError('Frozen reference artifact changed')
+        reference = json.loads(path.read_text())
+        if (not derived_values_equal(reference['replay_adapter'], manifest['replay_adapter'])
+                or reference['replay_adapter_applied'] is not False):
+            raise ValueError('Reference adapter identity changed or capture was patched')
 
 
 def rebuild_index(output):
@@ -169,6 +183,7 @@ def rebuild_index(output):
 
 
 def trial_record(output, manifest, planned, reference_path, factory, baseline):
+    from services.robotwin.acceptance import derived_values_equal
     reference = json.loads(reference_path.read_text())
     commanded = intervene(reference['trajectory'], planned['case'])
     directory = output/'trials'/planned['trial_id']
@@ -191,6 +206,11 @@ def trial_record(output, manifest, planned, reference_path, factory, baseline):
                     or abs(float(actual_initial[3:] @ expected[3:])) < 1-1e-6
                     or abs(measured[arm]['gripper']-reference['trajectory'][arm]['gripper'][0]) > 1e-5):
                 raise ValueError('Fresh replay initial EEF/gripper state differs from reference')
+        adapter = install_base_frame_adapter(native)
+        if (not derived_values_equal(adapter, manifest['replay_adapter'])
+                or not derived_values_equal(adapter, reference['replay_adapter'])):
+            raise ValueError('Replay adapter assets differ from the frozen experiment')
+        raw.update(replay_adapter=adapter, replay_adapter_applied=True)
         raw.update(replay(native, commanded))
         actual = raw.pop('actual')
         if raw['execution_complete']:
@@ -244,6 +264,7 @@ def run(args):
                   baseline_repeats=args.baseline_repeats, cases=default_cases(), tracking=TRACKING,
                   driver_sha256=digest(__file__), replay_sha256=digest(ROOT/'services/robotwin/acceptance_replay.py'),
                   exclusions_sha256=json_digest(exclusions), alignment=ALIGNMENT, native_success_rule=SUCCESS_RULE)
+    config['replay_adapter_version'] = BASE_FRAME_ADAPTER
     bind(output/'configuration.json', config)
     if args.check_only:
         print(json.dumps(dict(check='passed', gpu_started=False, trials_per_seed=args.baseline_repeats+len(default_cases()))))
@@ -307,6 +328,8 @@ def run(args):
                         raise ValueError('Reference scene duplicates a training/selected scene')
                     references[seed] = path
                     scenes.add(fingerprint)
+                except ReplayAdapterError:
+                    raise
                 except Exception as exc:
                     atomic_json(output/'reference_rejections'/f'seed{seed}.json',
                                 dict(seed=seed, reason=f'{type(exc).__name__}: {exc}'))
@@ -317,6 +340,7 @@ def run(args):
             manifest = {key: config[key] for key in ('task', 'template_sha256', 'annotation_policy_sha256',
                         'native_commit', 'alignment', 'native_success_rule')}
             manifest.update(version=1, mode='demo_clean', split='validation', template=template,
+                            replay_adapter=json.loads(next(iter(references.values())).read_text())['replay_adapter'],
                             excluded_training_seeds=exclusions['excluded_training_seeds'],
                             excluded_training_scene_sha256=exclusions['excluded_training_scene_sha256'],
                             trial_plan=planned_trials(references, args.baseline_repeats, config['cases']),

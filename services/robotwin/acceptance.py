@@ -23,6 +23,7 @@ from services.robotwin.constraint_schema import validate_bundle
 ACCEPTANCE_VERSION = 2
 ALIGNMENT = 'reference_command_index_v1'
 SUCCESS_RULE = 'native_ever_success'
+REPLAY_ADAPTER_VERSION = 'urdf_fixed_arm_base_se3_v1'
 FAMILIES = ('position', 'orientation', 'gripper_timing', 'coupled')
 DEFAULT_PROTOCOL = {
     'version': 'counterfactual_pilot_v1',
@@ -231,6 +232,47 @@ def _artifact(root, record, name):
     return json.loads(path.read_text())
 
 
+def validate_replay_adapter(audit):
+    """Validate the frozen CPU-readable identity of the trial-only controller fix.
+
+    Source digests describe files read by the native runner. Offline assessment
+    neither imports the simulator nor requires those original paths to exist.
+    """
+    if (not isinstance(audit, dict) or set(audit) != {'version', 'arms'}
+            or audit['version'] != REPLAY_ADAPTER_VERSION
+            or not isinstance(audit['arms'], dict) or set(audit['arms']) != {'left', 'right'}):
+        raise ValueError('Missing versioned replay adapter identity')
+    hashes = ('physics_urdf_sha256', 'planner_urdf_sha256', 'planner_yaml_sha256')
+    strings = ('physics_urdf_path', 'planner_urdf_path', 'planner_yaml', 'root_link', 'arm_base',
+               'ee_link', 'ee_joint', 'fixed_joint')
+    for value in audit['arms'].values():
+        required = {*hashes, *strings, 'xyz', 'rpy', 'frame_bias', 'rotation', 'quaternion_order'}
+        if not isinstance(value, dict) or set(value) != required or value['quaternion_order'] != 'wxyz':
+            raise ValueError('Invalid replay adapter arm identity or quaternion convention')
+        if any(not isinstance(value[k], str) or not value[k] for k in strings):
+            raise ValueError('Missing replay adapter source/kinematic identity')
+        if any(not isinstance(value[k], str) or len(value[k]) != 64
+               or set(value[k])-set('0123456789abcdef') for k in hashes):
+            raise ValueError('Replay adapter requires exact source file SHA256 digests')
+        if value['physics_urdf_sha256'] != value['planner_urdf_sha256']:
+            raise ValueError('Replay adapter planner and physics URDF identities differ')
+        arrays = {k: np.asarray(value[k]) for k in ('xyz', 'rpy', 'frame_bias', 'rotation')}
+        for name, array in arrays.items():
+            if (array.shape != ((3, 3) if name == 'rotation' else (3,))
+                    or array.dtype.kind not in 'iuf' or not np.isfinite(array).all()):
+                raise ValueError('Invalid replay adapter fixed transform')
+        if not np.allclose(arrays['xyz'], -arrays['frame_bias'], rtol=0, atol=1e-8):
+            raise ValueError('Replay adapter frame bias disagrees with URDF translation')
+        roll, pitch, yaw = arrays['rpy']
+        cr, cp, cy = np.cos([roll, pitch, yaw]); sr, sp, sy = np.sin([roll, pitch, yaw])
+        expected = np.array([[cy*cp, cy*sp*sr-sy*cr, cy*sp*cr+sy*sr],
+                             [sy*cp, sy*sp*sr+cy*cr, sy*sp*cr-cy*sr],
+                             [-sp, cp*sr, cp*cr]])
+        if not np.allclose(arrays['rotation'], expected, rtol=DERIVED_RTOL, atol=DERIVED_ATOL):
+            raise ValueError('Replay adapter rotation disagrees with URDF RPY')
+    return audit
+
+
 def validate_manifest(manifest):
     from services.robotwin.programmatic_annotation import template_hash, validate_template
 
@@ -243,6 +285,7 @@ def validate_manifest(manifest):
         raise ValueError('Acceptance requires explicit held-out clean aligned native evidence')
     if manifest['annotation_policy_sha256'] != annotation_policy_fingerprint():
         raise ValueError('Acceptance evidence uses another annotation implementation/policy')
+    validate_replay_adapter(manifest.get('replay_adapter'))
     validate_template(manifest['template'])
     if template_hash(manifest['template']) != manifest['template_sha256'] or manifest['template']['task'] != manifest['task']:
         raise ValueError('Sealed template does not match its identity')
@@ -339,8 +382,14 @@ def evaluate_trial(record, evidence_root, manifest, *, protocol=None):
                     native_success=raw.get('native_success'), constraint_pass=None)
     if type(raw.get('native_success')) is not bool or raw.get('ever_success') is not raw['native_success']:
         raise ValueError('Native success must be the independently recorded ever-success predicate')
+    if (raw.get('replay_adapter_applied') is not True
+            or not derived_values_equal(raw.get('replay_adapter'), manifest['replay_adapter'])):
+        raise ValueError('Replay adapter outcome identity/application differs from the sealed manifest')
     reference = _artifact(evidence_root, record, 'reference')
     trajectory = _artifact(evidence_root, record, 'trajectory')
+    if (reference.get('replay_adapter_applied') is not False
+            or not derived_values_equal(reference.get('replay_adapter'), manifest['replay_adapter'])):
+        raise ValueError('Replay adapter reference identity/application differs from the sealed manifest')
     provenance = reference['provenance']
     for key in ('task', 'seed', 'scene_sha256', 'mode', 'split'):
         if provenance.get(key) != record[key]:
@@ -506,6 +555,7 @@ def assess_evidence(evidence_root, *, protocol=None, expected_task=None, expecte
         reasons.append('successful_variations_rejected')
     return dict(version=ACCEPTANCE_VERSION, task=manifest['task'], template_sha256=manifest['template_sha256'],
                 annotation_policy_sha256=manifest['annotation_policy_sha256'], evaluator_sha256=evaluator_fingerprint(),
+                replay_adapter_sha256=json_hash(manifest['replay_adapter']),
                 protocol=protocol, protocol_sha256=json_hash(protocol), manifest_sha256=file_hash(manifest_path),
                 records_sha256=file_hash(records_path) if records_path.exists() else None,
                 ready=not reasons, status='ready' if not reasons else 'blocked', reasons=sorted(set(reasons)),

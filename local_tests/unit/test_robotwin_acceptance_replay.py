@@ -168,21 +168,31 @@ def test_reference_artifact_is_validation_only_and_protected_from_training_reade
         validate_bundle(bundle)
 
 
-def test_real_record_roundtrip_is_recomputed_by_cpu_gate_and_artifacts_are_hashed(tmp_path):
+def test_real_record_roundtrip_is_recomputed_by_cpu_gate_and_artifacts_are_hashed(tmp_path, monkeypatch):
+    from local_tests.unit.test_robotwin_acceptance import replay_adapter
+    from scripts import validate_robotwin_constraint_acceptance as runner
+    adapter_calls = []
+    def fake_adapter(native, *, install=True):
+        adapter_calls.append(install)
+        return replay_adapter()
+    monkeypatch.setattr(runner, 'install_base_frame_adapter', fake_adapter)
     task_template = template(); ref = reference()
     fingerprint = scene_fingerprint(dict(actors=[], task_articulations=[]))
     bundle, _ = reference_bundle(task_template, ref, 10000, fingerprint)
     reference_path = tmp_path/'references/seed10000.json'
     atomic_json(reference_path, dict(bundle=bundle, trajectory=ref,
+                                    replay_adapter=replay_adapter(), replay_adapter_applied=False,
                                     provenance=dict(task='adjust_bottle', seed=10000, scene_sha256=fingerprint,
                                                     mode='demo_clean', split='validation', source_episode_sha256=json_digest(ref))))
     planned = planned_trials([10000], 2, [])[0]
     manifest = dict(version=1, task='adjust_bottle', template=task_template, template_sha256=template_hash(task_template),
+                    replay_adapter=replay_adapter(),
                     annotation_policy_sha256=annotation_policy_fingerprint(), native_commit='a'*40,
                     mode='demo_clean', split='validation', alignment=ALIGNMENT, native_success_rule=SUCCESS_RULE,
                     excluded_training_seeds=[0], excluded_training_scene_sha256=['training_scene'], trial_plan=[planned])
     validate_manifest(manifest)
     record, raw, actual = trial_record(tmp_path, manifest, planned, reference_path, lambda seed: FakeNative(), None)
+    assert adapter_calls == [True] and raw['replay_adapter_applied'] is True
     assert raw['native_success'] and raw['realized']
     checked = evaluate_trial(record, tmp_path, manifest)
     assert checked['eligible'] and checked['constraint_pass']
@@ -190,6 +200,28 @@ def test_real_record_roundtrip_is_recomputed_by_cpu_gate_and_artifacts_are_hashe
     with (tmp_path/record['outcome_path']).open('a') as handle: handle.write(' ')
     with pytest.raises(ValueError, match='Changed outcome'):
         evaluate_trial(record, tmp_path, manifest)
+
+
+def test_reference_capture_records_adapter_without_changing_expert_control(monkeypatch):
+    from local_tests.unit.test_robotwin_acceptance import replay_adapter
+    from scripts import collect_robotwin_clean50 as collector
+    from scripts import validate_robotwin_constraint_acceptance as runner
+    calls = []
+    def describe(native, *, install=True):
+        calls.append(install)
+        assert install is False
+        return replay_adapter()
+    def expert(native):
+        for command in command_rows(reference())[1:]:
+            native.robot.left = command[:8].tolist()
+            native.robot.right = command[8:].tolist()
+            native._take_picture()
+        native.plan_success = True
+    monkeypatch.setattr(runner, 'install_base_frame_adapter', describe)
+    monkeypatch.setattr(collector, 'play_expert', expert)
+    value = runner.capture_reference(lambda seed: FakeNative(), template(), 10000, set())
+    assert calls == [False] and value['replay_adapter'] == replay_adapter()
+    assert value['replay_adapter_applied'] is False
 
 
 def test_resume_configuration_cannot_change_after_results(tmp_path):

@@ -11,6 +11,19 @@ from services.robotwin.programmatic_annotation import instantiate, template_hash
 from services.robotwin.acceptance_replay import intervene, tracking_report
 
 
+def replay_adapter():
+    arms = {}
+    for arm, prefix in [('left', 'fl'), ('right', 'fr')]:
+        arms[arm] = dict(physics_urdf_path='/synthetic/robot.urdf', physics_urdf_sha256='a'*64,
+                         planner_urdf_path='/synthetic/robot.urdf', planner_urdf_sha256='a'*64,
+                         planner_yaml=f'/synthetic/{arm}.yml', planner_yaml_sha256='b'*64,
+                         root_link='footprint', arm_base=prefix+'_base_link', ee_link=prefix+'_link6',
+                         ee_joint=prefix+'_joint6', fixed_joint=prefix+'_base_joint',
+                         xyz=[0., 0., 0.], rpy=[0., 0., 0.], frame_bias=[0., 0., 0.],
+                         rotation=np.eye(3).tolist(), quaternion_order='wxyz')
+    return dict(version=gate.REPLAY_ADAPTER_VERSION, arms=arms)
+
+
 def template():
     def rule(name, kind, selector, parameters, origin='world'):
         return dict(id=name, type=kind, subjects='active_arms', selector=selector,
@@ -48,7 +61,8 @@ def reference(seed, t):
         h[f'endpose/{arm}_gripper'] = np.asarray(values['gripper'])
     b['constraints'], _ = instantiate(h, t)
     b['provenance'].update(split='validation', variant='clean_heldout')
-    return dict(bundle=b, trajectory=trajectory, provenance=provenance)
+    return dict(bundle=b, trajectory=trajectory, provenance=provenance,
+                replay_adapter=replay_adapter(), replay_adapter_applied=False)
 
 
 def write(path, value):
@@ -73,6 +87,7 @@ def evidence(tmp_path):
     t = template()
     manifest = dict(version=1, task=t['task'], template=t, template_sha256=template_hash(t),
                     annotation_policy_sha256=gate.annotation_policy_fingerprint(), native_commit='native-test-commit',
+                    replay_adapter=replay_adapter(),
                     mode='demo_clean', split='validation', alignment=gate.ALIGNMENT, native_success_rule=gate.SUCCESS_RULE,
                     excluded_training_seeds=[0, 1, 2], excluded_training_scene_sha256=['train-a', 'train-b', 'train-c'],
                     trial_plan=[])
@@ -101,6 +116,7 @@ def evidence(tmp_path):
             outcome = {k: record[k] for k in ('trial_id', 'task', 'seed', 'scene_sha256', 'variant_family')}
             outcome.update(native_success=success, ever_success=success, final_success=success,
                            planner_success=True, realized=True, execution_complete=True,
+                           replay_adapter=replay_adapter(), replay_adapter_applied=True,
                            planner_results=[dict(arm=arm, frame=frame, status='Success')
                                             for frame in range(1, 5) for arm in ('left', 'right')],
                            tracking=tracking_report(actual, actual, baseline=ref['trajectory'] if index else None,
@@ -327,3 +343,53 @@ def test_family_name_alone_does_not_count_as_a_coupled_intervention(evidence):
     write(root/'experiment_manifest.json', manifest)
     with pytest.raises(ValueError, match='family'):
         gate.assess_evidence(root)
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'different_urdf', 'invalid_rotation', 'xyzw'])
+def test_adapter_manifest_identity_is_required_and_structurally_checked(evidence, mutation):
+    root, manifest, _ = evidence
+    arm = manifest['replay_adapter']['arms']['left']
+    if mutation == 'missing':
+        del manifest['replay_adapter']
+    elif mutation == 'different_urdf':
+        arm['planner_urdf_sha256'] = 'c'*64
+    elif mutation == 'invalid_rotation':
+        arm['rotation'][0][0] = -1.
+    else:
+        arm['quaternion_order'] = 'xyzw'
+    write(root/'experiment_manifest.json', manifest)
+    with pytest.raises(ValueError, match='adapter'):
+        gate.assess_evidence(root)
+
+
+@pytest.mark.parametrize('artifact_name', ['reference', 'outcome'])
+def test_reference_and_outcome_adapter_source_hashes_must_match_manifest(evidence, artifact_name):
+    root, _, records = evidence
+    trial = next(r for r in records if r['variant_family'] == 'position')
+    path = root/trial[artifact_name+'_path']
+    value = json.loads(path.read_text())
+    value['replay_adapter']['arms']['left']['planner_yaml_sha256'] = 'c'*64
+    write(path, value)
+    for r in records:
+        if r[artifact_name+'_path'] == trial[artifact_name+'_path']:
+            r[artifact_name+'_sha256'] = gate.file_hash(path)
+    rewrite_records(root, records)
+    report = gate.assess_evidence(root)
+    assert not report['ready']
+    assert any('Replay adapter' in e['error'] for e in report['errors'])
+
+
+@pytest.mark.parametrize('artifact_name,value', [('reference', True), ('outcome', False)])
+def test_adapter_only_applied_to_trials_not_reference_expert(evidence, artifact_name, value):
+    root, _, records = evidence
+    trial = next(r for r in records if r['variant_family'] == 'position')
+    path = root/trial[artifact_name+'_path']
+    payload = json.loads(path.read_text());payload['replay_adapter_applied'] = value
+    write(path, payload)
+    for r in records:
+        if r[artifact_name+'_path'] == trial[artifact_name+'_path']:
+            r[artifact_name+'_sha256'] = gate.file_hash(path)
+    rewrite_records(root, records)
+    report = gate.assess_evidence(root)
+    assert not report['ready']
+    assert any('Replay adapter' in e['error'] for e in report['errors'])

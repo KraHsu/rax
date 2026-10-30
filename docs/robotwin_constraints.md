@@ -310,3 +310,35 @@ Raw artifact and receipt hashes are exact. Recomputed floating-point geometry an
 tracking summaries use only `rtol=1e-10, atol=1e-12` for cross-Python/NumPy
 consistency; keys, booleans, discrete indices and pass/fail decisions remain
 exact. This numerical comparison does not widen any physical acceptance bound.
+
+
+### Native arm-base frame correction for acceptance replay
+
+The installed RoboTwin cuRobo adapter subtracts the fixed arm-base translation
+but omits its URDF rotation. For the aloha-agilex asset, the left/right fixed
+base yaw is 0.02/0.01 rad. This produced successful baseline replays with
+7.9–11.4 mm measured EEF errors, which correctly failed the 5 mm realization
+gate. A correction using the complete URDF SE(3), without fitted offsets,
+reduced those three first-seed baseline maxima to 2.1–3.1 mm while preserving
+native success. The physical robot asset, controller, task predicates and
+acceptance thresholds are unchanged.
+
+Acceptance installs the `urdf_fixed_arm_base_se3_v1` private transform wrapper
+on each trial's planner instances. Native expert reference capture remains unchanged. The wrapper
+applies the inverse fixed arm-base rotation after the world-to-root transform
+and before the native translation subtraction, accounting for that subtraction
+exactly once. Both position and WXYZ orientation are transformed; measured
+actual trajectories and constraint bounds are never compensated.
+
+The adapter verifies the physics and planner URDF identity, direct fixed-base
+chain, end-effector link, planner configuration and translation convention.
+Unsupported planner/robot configurations fail explicitly. The manifest freezes
+an asset/adapter audit; references set `replay_adapter_applied: false`, while
+completed trial outcomes set it to `true`. Both retain identical URDF/YAML hashes. CPU reassessment verifies their consistency and
+matrix semantics without importing a simulator. Source fingerprints include the
+adapter code. Earlier failed attempts retain their original code and evidence;
+corrected attempts use a separate physical artifact directory.
+
+Future policy comparisons must use and report the same controller/frame adapter
+for both baseline and candidate models. A partial score collected under the
+legacy adapter cannot establish the effect of constraint supervision by itself.
