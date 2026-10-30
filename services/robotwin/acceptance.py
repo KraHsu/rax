@@ -275,6 +275,7 @@ def validate_replay_adapter(audit):
 
 def validate_manifest(manifest):
     from services.robotwin.programmatic_annotation import template_hash, validate_template
+    from services.robotwin.success_metadata import validate_metadata_policy
 
     for key in ('task', 'template_sha256', 'annotation_policy_sha256', 'native_commit'):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
@@ -285,6 +286,7 @@ def validate_manifest(manifest):
         raise ValueError('Acceptance requires explicit held-out clean aligned native evidence')
     if manifest['annotation_policy_sha256'] != annotation_policy_fingerprint():
         raise ValueError('Acceptance evidence uses another annotation implementation/policy')
+    validate_metadata_policy(manifest['task'], manifest.get('success_metadata_policy'))
     validate_replay_adapter(manifest.get('replay_adapter'))
     validate_template(manifest['template'])
     if template_hash(manifest['template']) != manifest['template_sha256'] or manifest['template']['task'] != manifest['task']:
@@ -351,6 +353,8 @@ def validate_case(case, family):
 
 
 def evaluate_trial(record, evidence_root, manifest, *, protocol=None):
+    from services.robotwin.success_metadata import validate_metadata_policy, validate_metadata_receipt
+    validate_metadata_policy(manifest['task'], manifest.get('success_metadata_policy'))
     protocol = validate_protocol(protocol)
     if record.get('version') != 1:
         raise ValueError('Unsupported trial record version')
@@ -386,6 +390,10 @@ def evaluate_trial(record, evidence_root, manifest, *, protocol=None):
             or not derived_values_equal(raw.get('replay_adapter'), manifest['replay_adapter'])):
         raise ValueError('Replay adapter outcome identity/application differs from the sealed manifest')
     reference = _artifact(evidence_root, record, 'reference')
+    validate_metadata_receipt(manifest['task'], raw.get('success_metadata'), record['scene_sha256'],
+                              policy=manifest.get('success_metadata_policy'))
+    validate_metadata_receipt(manifest['task'], reference.get('success_metadata'), record['scene_sha256'],
+                              policy=manifest.get('success_metadata_policy'))
     trajectory = _artifact(evidence_root, record, 'trajectory')
     if (reference.get('replay_adapter_applied') is not False
             or not derived_values_equal(reference.get('replay_adapter'), manifest['replay_adapter'])):

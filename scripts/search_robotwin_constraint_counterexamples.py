@@ -38,6 +38,9 @@ from services.robotwin.adversarial_search import (  # noqa: E402
 )
 from services.robotwin.collection import atomic_json, initial_scene, scene_fingerprint  # noqa: E402
 from services.robotwin.programmatic_annotation import template_hash  # noqa: E402
+from services.robotwin.success_metadata import (  # noqa: E402
+    MARKER, initialize_success_metadata, metadata_policy, validate_metadata_policy, validate_metadata_receipt,
+)
 from scripts.validate_robotwin_constraint_acceptance import (  # noqa: E402
     bind, load_template, reference_bundle, training_exclusions,
 )
@@ -184,6 +187,9 @@ def prepare_reference(source, source_manifest, template, exclusions):
     template; the original reference and manifest are separately archived.
     """
     p = source['provenance']
+    validate_metadata_policy(template['task'], source_manifest.get('success_metadata_policy'))
+    validate_metadata_receipt(template['task'], source.get('success_metadata'), p['scene_sha256'],
+                              policy=source_manifest.get('success_metadata_policy'))
     if (source_manifest.get('mode') != 'demo_clean' or source_manifest.get('split') != 'validation'
             or source_manifest.get('task') != template['task'] or p['task'] != template['task']
             or source_manifest.get('native_commit') != exclusions['native_commit']
@@ -339,10 +345,13 @@ def rebuild_index(root):
 
 
 def verify_trial(root, manifest, planned):
+    validate_metadata_policy(manifest['task'], manifest.get('success_metadata_policy'))
     root = Path(root)
     record_path = root/'trials'/planned['trial_id']/'record.json'
     record = read(record_path)
     reference = checked_artifact(root, manifest['reference'])
+    validate_metadata_receipt(manifest['task'], reference.get('success_metadata'), manifest['scene_sha256'],
+                              policy=manifest.get('success_metadata_policy'))
     candidate = _candidate(manifest, planned, root, reference)
     for key, value in dict(trial_id=planned['trial_id'], manifest_sha256=file_hash(root/'search_manifest.json'),
                            reference_sha256=manifest['reference']['sha256'],
@@ -350,6 +359,9 @@ def verify_trial(root, manifest, planned):
         if record.get(key) != value:
             raise ValueError(f'Trial record context changed: {key}')
     raw = checked_artifact(root, record['outcome'])
+    if raw.get('execution_complete') is True:
+        validate_metadata_receipt(manifest['task'], raw.get('success_metadata'), manifest['scene_sha256'],
+                                  policy=manifest.get('success_metadata_policy'))
     trace = checked_artifact(root, record['trajectory'])
     if 'scene_trace' in record:
         diagnostic = checked_artifact(root, record['scene_trace'])
@@ -383,11 +395,14 @@ def verify_campaign(root):
     """Read and independently reassess every committed slot; never run a GPU."""
     root = Path(root)
     manifest = read(root/'search_manifest.json')
+    validate_metadata_policy(manifest['task'], manifest.get('success_metadata_policy'))
     if (manifest.get('version') != DISCOVERY_VERSION or manifest.get('purpose') != 'counterexample_discovery_not_acceptance'
             or manifest.get('evaluator_sha256') != evaluator_fingerprint()
             or manifest.get('alignment') != ALIGNMENT or manifest.get('native_success_rule') != SUCCESS_RULE):
         raise ValueError('Unsupported discovery evaluator/protocol identity')
     config = read(root/'configuration.json')
+    if config.get('success_metadata_policy') != manifest.get('success_metadata_policy'):
+        raise ValueError('Success metadata policy differs between search inputs and manifest')
     if (json_hash(config) != manifest['configuration_sha256']
             or config['annotation_policy_sha256'] != manifest['annotation_policy_sha256']
             or config['template_sha256'] != manifest['template_sha256']):
@@ -399,6 +414,8 @@ def verify_campaign(root):
         raise ValueError('Frozen template changed')
     reference = checked_artifact(root, manifest['reference'])
     validate_acceptance_bundle(reference['bundle'], len(arrays(reference['trajectory'])['left']['pose']))
+    validate_metadata_receipt(manifest['task'], reference.get('success_metadata'), manifest['scene_sha256'],
+                              policy=manifest.get('success_metadata_policy'))
     _verify_instantiation(reference, manifest['template'])
     if (manifest['scene_seed'] != reference['provenance']['seed']
             or manifest['scene_sha256'] != reference['provenance']['scene_sha256']
@@ -411,6 +428,15 @@ def verify_campaign(root):
     # Sources are retained verbatim even when current data-only template policy differs.
     for key in ('source_reference', 'source_manifest'):
         checked_artifact(root, manifest[key])
+    original_reference = checked_artifact(root, manifest['source_reference'])
+    original_manifest = checked_artifact(root, manifest['source_manifest'])
+    validate_metadata_policy(manifest['task'], original_manifest.get('success_metadata_policy'))
+    if original_manifest.get('success_metadata_policy') != manifest.get('success_metadata_policy'):
+        raise ValueError('Source and replay success metadata numeric contexts differ')
+    validate_metadata_receipt(manifest['task'], original_reference.get('success_metadata'), manifest['scene_sha256'],
+                              policy=original_manifest.get('success_metadata_policy'))
+    if reference.get('success_metadata') != original_reference.get('success_metadata'):
+        raise ValueError('Working reference changed its original initialization evidence')
     ids = [p['trial_id'] for p in manifest['trial_plan']]
     if len(ids) != len(set(ids)) or ids[:2] != ['baseline_0', 'baseline_1']:
         raise ValueError('Discovery needs preregistered unique slots and two leading baselines')
@@ -475,6 +501,8 @@ def execute_trial(root, manifest, planned, factory):
         native = factory(manifest['scene_seed'])
         if scene_fingerprint(initial_scene(native)) != manifest['scene_sha256']:
             raise ValueError('Fresh scene differs from the frozen reference')
+        if hasattr(native, MARKER):
+            raw['success_metadata'] = getattr(native, MARKER)
         adapter = install_base_frame_adapter(native)
         if not derived_values_equal(adapter, manifest['replay_adapter']):
             raise ValueError('Native replay assets differ from the frozen adapter')
@@ -560,6 +588,10 @@ def prepare_campaign(args):
                   model_inputs_sha256=file_hash(args.model_candidates) if args.model_candidates else None,
                   feedback_inputs_sha256=file_hash(args.feedback) if args.feedback else None, feedback_receipts=feedback,
                   training_exclusions_sha256=json_hash(exclusions))
+    if metadata_policy(template['task']) is not None:
+        # CPU preparation/checking may use another NumPy. Replay must later
+        # use this source-bound native context; never relabel its arithmetic.
+        config['success_metadata_policy'] = source_manifest['success_metadata_policy']
     validate_holdout_configuration(config, source_fingerprint())
     bind(root/'configuration.json', config)
     if (root/'search_manifest.json').exists():
@@ -592,6 +624,8 @@ def prepare_campaign(args):
                     seed=args.random_seed, budget=args.candidate_budget, candidates=candidates,
                     model_candidates=models, feedback_parents=parents, selection_audit=selection_audit),
                     trial_plan=make_trial_plan(candidates, args.baseline_repeats, include_outside_controls=args.include_outside_controls))
+    if 'success_metadata_policy' in config:
+        manifest['success_metadata_policy'] = config['success_metadata_policy']
     # Preserve original source bytes, including their original hashes, not a
     # re-serialized object masquerading as the old source artifact.
     (root/'source_reference.json').write_bytes(source_path.read_bytes())
@@ -620,6 +654,8 @@ def run(args):
         from services.robotwin.collection import install_planner_cache
         if source_commit() != manifest['native_commit']:
             raise ValueError('Native source revision differs from the frozen reference')
+        if metadata_policy(manifest['task']) != manifest.get('success_metadata_policy'):
+            raise ValueError('Native replay metadata runtime differs from frozen source context')
         initialize_runtime(); install_planner_cache()
         native_class = getattr(importlib.import_module('envs.'+manifest['task']), manifest['task'])
         kwargs = native_config(manifest['task'], 0)
@@ -630,6 +666,7 @@ def run(args):
             native = native_class()
             try:
                 native.setup_demo(now_ep_num=0, seed=seed, is_test=False, **kwargs)
+                initialize_success_metadata(manifest['task'], native, expected_scene_sha256=manifest['scene_sha256'])
             except BaseException:
                 native.close_env(); raise
             return native

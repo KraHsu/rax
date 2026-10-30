@@ -28,6 +28,9 @@ from services.robotwin.acceptance_replay import (  # noqa: E402
 from services.robotwin.collection import atomic_json, initial_scene, scene_fingerprint  # noqa: E402
 from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json  # noqa: E402
 from services.robotwin.programmatic_annotation import instantiate, template_hash, validate_template  # noqa: E402
+from services.robotwin.success_metadata import (  # noqa: E402
+    MARKER, SuccessMetadataError, initialize_success_metadata, metadata_policy, validate_metadata_policy,
+)
 
 
 def digest(path):
@@ -132,6 +135,7 @@ def capture_reference(factory, template, seed, excluded_scenes):
         bundle, audit = reference_bundle(template, trajectory, seed, fingerprint)
         source_hash = json_digest(dict(scene=scene, trajectory=trajectory))
         return dict(bundle=bundle, trajectory=trajectory, template_audit=audit, initial_scene=scene,
+                    **({'success_metadata': getattr(native, MARKER)} if hasattr(native, MARKER) else {}),
                     replay_adapter=adapter, replay_adapter_applied=False,
                     provenance=dict(task=template['task'], seed=seed, scene_sha256=fingerprint,
                                     mode='demo_clean', split='validation', source_episode_sha256=source_hash,
@@ -150,6 +154,9 @@ def planned_trials(references, baseline_repeats, cases):
 def verify_plan(manifest, config, exclusions, template, output):
     """A resumed plan must still represent the exact preregistered experiment."""
     from services.robotwin.acceptance import derived_values_equal
+    validate_metadata_policy(template['task'], manifest.get('success_metadata_policy'))
+    if manifest.get('success_metadata_policy') != config.get('success_metadata_policy'):
+        raise SuccessMetadataError('Success metadata policy differs between manifest and configuration')
     for key in ('task', 'template_sha256', 'annotation_policy_sha256', 'native_commit', 'alignment', 'native_success_rule'):
         if manifest[key] != config[key]:
             raise ValueError(f'Manifest/configuration mismatch: {key}')
@@ -198,6 +205,8 @@ def trial_record(output, manifest, planned, reference_path, factory, baseline):
         fingerprint = scene_fingerprint(initial_scene(native))
         if fingerprint != reference['provenance']['scene_sha256']:
             raise ValueError('Fresh replay initial scene differs from the captured reference')
+        if hasattr(native, MARKER):
+            raw['success_metadata'] = getattr(native, MARKER)
         measured = sample(native)
         for arm in ('left', 'right'):
             expected = np.asarray(reference['trajectory'][arm]['pose'][0])
@@ -265,6 +274,8 @@ def run(args):
                   driver_sha256=digest(__file__), replay_sha256=digest(ROOT/'services/robotwin/acceptance_replay.py'),
                   exclusions_sha256=json_digest(exclusions), alignment=ALIGNMENT, native_success_rule=SUCCESS_RULE)
     config['replay_adapter_version'] = BASE_FRAME_ADAPTER
+    if metadata_policy(template['task']) is not None:
+        config['success_metadata_policy'] = metadata_policy(template['task'])
     bind(output/'configuration.json', config)
     if args.check_only:
         print(json.dumps(dict(check='passed', gpu_started=False, trials_per_seed=args.baseline_repeats+len(default_cases()))))
@@ -299,6 +310,8 @@ def run(args):
         native = native_class()
         try:
             native.setup_demo(now_ep_num=0, seed=seed, is_test=False, **kwargs)
+            initialize_success_metadata(template['task'], native,
+                                        expected_scene_sha256=scene_fingerprint(initial_scene(native)))
         except BaseException:
             native.close_env()
             raise
@@ -328,7 +341,7 @@ def run(args):
                         raise ValueError('Reference scene duplicates a training/selected scene')
                     references[seed] = path
                     scenes.add(fingerprint)
-                except ReplayAdapterError:
+                except (ReplayAdapterError, SuccessMetadataError):
                     raise
                 except Exception as exc:
                     atomic_json(output/'reference_rejections'/f'seed{seed}.json',
@@ -346,6 +359,8 @@ def run(args):
                             trial_plan=planned_trials(references, args.baseline_repeats, config['cases']),
                             reference_artifacts=[dict(seed=seed, path=str(path.relative_to(output)), sha256=digest(path))
                                                  for seed, path in references.items()])
+            if 'success_metadata_policy' in config:
+                manifest['success_metadata_policy'] = config['success_metadata_policy']
             bind(manifest_path, manifest)
         validate_manifest(manifest)
         verify_plan(manifest, config, exclusions, template, output)

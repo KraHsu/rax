@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from services.robotwin.acceptance import file_hash, json_hash
+from services.robotwin.success_metadata import validate_metadata_policy, validate_metadata_receipt
 
 
 def read(path):
@@ -80,6 +81,9 @@ def verify_model_evidence(inventory_path, rows, release):
             raise ValueError('Raw model evidence requires source, checkpoint and collector artifact paths')
         root = Path(spec['root']).resolve()
         run = read(root/'source_run.json'); run_hash = digest(root/'source_run.json')
+        validate_metadata_policy(run['task'], run.get('success_metadata_policy'))
+        validate_metadata_receipt(run['task'], run.get('success_metadata'), run.get('scene_sha256'),
+                                  policy=run.get('success_metadata_policy'))
         if run_hash in runs:
             raise ValueError('Duplicate raw model run')
         for field, name in [('checkpoint_sha256', 'checkpoint_path'),

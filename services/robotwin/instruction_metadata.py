@@ -32,6 +32,17 @@ def _asset_id(value, allowed):
     return int(value)
 
 
+def audited_native_source(task, native, sources):
+    """Shared source identity check for read-only instruction/success adapters."""
+    if type(native).__name__ != task:
+        raise ValueError('Instruction task and native environment class differ')
+    source = Path(inspect.getfile(type(native)))
+    actual = hashlib.sha256(source.read_bytes()).hexdigest()
+    if actual != sources[task]:
+        raise ValueError('Native task source changed; review the read-only metadata adapter')
+    return actual
+
+
 def readonly_instruction_metadata(task, native):
     """Return audited initial-scene metadata/provenance, or None if unsupported.
 
@@ -40,13 +51,9 @@ def readonly_instruction_metadata(task, native):
     mutated, and no get_info/play_once/motion function is called.
     """
     if task not in SOURCE_SHA256:
-        return None
-    if type(native).__name__ != task:
-        raise ValueError('Instruction task and native environment class differ')
-    source = Path(inspect.getfile(type(native)))
-    actual = hashlib.sha256(source.read_bytes()).hexdigest()
-    if actual != SOURCE_SHA256[task]:
-        raise ValueError('Native task source changed; review the read-only metadata adapter')
+        from services.robotwin.success_metadata import readonly_success_instruction_metadata
+        return readonly_success_instruction_metadata(task, native)
+    actual = audited_native_source(task, native, SOURCE_SHA256)
     if task == 'blocks_ranking_size':
         # Native actor identities are size identities, independent of execution
         # order (the expert visits block3, block2, block1).
