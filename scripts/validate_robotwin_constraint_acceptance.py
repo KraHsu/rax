@@ -31,6 +31,11 @@ from services.robotwin.programmatic_annotation import instantiate, template_hash
 from services.robotwin.success_metadata import (  # noqa: E402
     MARKER, SuccessMetadataError, initialize_success_metadata, metadata_policy, validate_metadata_policy,
 )
+from services.robotwin.reference_branch import (  # noqa: E402
+    BranchIntegrityError, validate_branch_spec, validate_external_sources,
+    policy_fingerprint as branch_policy_fingerprint, reference_admission, seal_reference,
+    verify_reference as verify_branch_reference,
+)
 
 
 def digest(path):
@@ -112,7 +117,7 @@ def reference_bundle(template, trajectory, seed, fingerprint):
     return bundle, audit
 
 
-def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None):
+def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None, branch_spec=None):
     from scripts.collect_robotwin_clean50 import play_expert
     native = None
     started = time.monotonic()
@@ -141,15 +146,21 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
         if not attempt['planner_success'] or not attempt['native_success']:
             raise ValueError('Reference native expert did not succeed')
         trajectory = samples_to_trajectory(samples)
-        bundle, audit = reference_bundle(template, trajectory, seed, fingerprint)
         source_hash = json_digest(dict(scene=scene, trajectory=trajectory))
+        provenance = dict(task=template['task'], seed=seed, scene_sha256=fingerprint,
+                          mode='demo_clean', split='validation', source_episode_sha256=source_hash,
+                          recording_method='native_expert_save_freq_trace_no_images')
+        if branch_spec is not None:
+            # Persist the complete rejected reference as well as every partial
+            # expert attempt. Admission never reads generated actions or info.{a}.
+            attempt['branch_reference'] = dict(initial_scene=scene, trajectory=trajectory, provenance=provenance)
+            attempt['branch_admission'] = reference_admission(attempt['branch_reference'], branch_spec, template)
+        bundle, audit = reference_bundle(template, trajectory, seed, fingerprint)
         attempt['status'] = 'reference_captured'
         return dict(bundle=bundle, trajectory=trajectory, template_audit=audit, initial_scene=scene,
                     **({'success_metadata': getattr(native, MARKER)} if hasattr(native, MARKER) else {}),
                     replay_adapter=adapter, replay_adapter_applied=False,
-                    provenance=dict(task=template['task'], seed=seed, scene_sha256=fingerprint,
-                                    mode='demo_clean', split='validation', source_episode_sha256=source_hash,
-                                    recording_method='native_expert_save_freq_trace_no_images'),
+                    provenance=provenance,
                     capture_seconds=time.monotonic()-started)
     except BaseException as exc:
         attempt.update(status='failed', error=f'{type(exc).__name__}: {exc}')
@@ -160,6 +171,8 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
                 native.close_env()
         except BaseException as exc:
             attempt.update(status='failed', cleanup_error=f'{type(exc).__name__}: {exc}')
+            if branch_spec is not None:
+                raise BranchIntegrityError(f'Native reference cleanup failed: {type(exc).__name__}: {exc}') from exc
             raise
         finally:
             if attempt_path is not None:
@@ -194,6 +207,12 @@ def verify_plan(manifest, config, exclusions, template, output):
             raise ValueError(f'Manifest/configuration mismatch: {key}')
     if manifest['template'] != template:
         raise ValueError('Manifest template changed')
+    if manifest.get('branch_spec') != config.get('branch_spec') or manifest.get('branch_policy') != config.get('branch_policy'):
+        raise BranchIntegrityError('Branch identity differs between configuration and manifest')
+    if 'branch_spec' in config:
+        validate_branch_spec(config['branch_spec'], template)
+        if config['branch_policy'] != branch_policy_fingerprint():
+            raise BranchIntegrityError('Fixed-reference branch policy/source changed')
     for key in ('excluded_training_seeds', 'excluded_training_scene_sha256'):
         if manifest[key] != exclusions[key]:
             raise ValueError('Training exclusion inventory changed')
@@ -208,9 +227,30 @@ def verify_plan(manifest, config, exclusions, template, output):
         if not path.is_relative_to(output.resolve()) or digest(path) != entry['sha256']:
             raise ValueError('Frozen reference artifact changed')
         reference = json.loads(path.read_text())
+        if 'branch_spec' in config:
+            verify_branch_entry(manifest, entry, output, template)
         if (not derived_values_equal(reference['replay_adapter'], manifest['replay_adapter'])
                 or reference['replay_adapter_applied'] is not False):
             raise ValueError('Reference adapter identity changed or capture was patched')
+
+
+def verify_branch_entry(manifest, entry, output, template):
+    """Recompute branch receipt and compiled labels before admitting any native trial."""
+    reference_path = (output / entry['path']).resolve()
+    receipt_path = (output / entry['branch_receipt_path']).resolve()
+    if not all(p.is_relative_to(output.resolve()) for p in (reference_path, receipt_path)):
+        raise BranchIntegrityError('Branch reference/receipt escapes run root')
+    verify_branch_reference(reference_path, receipt_path, manifest['branch_spec'], template,
+                            expected_reference_sha256=entry['sha256'],
+                            expected_receipt_sha256=entry['branch_receipt_sha256'])
+    reference = json.loads(reference_path.read_text())
+    bundle, audit = reference_bundle(template, reference['trajectory'], entry['seed'],
+                                     reference['provenance']['scene_sha256'])
+    # The compiler may return tuples in audit diagnostics; persisted JSON uses lists.
+    bundle, audit = json.loads(json.dumps([bundle, audit], allow_nan=False))
+    from services.robotwin.acceptance import derived_values_equal
+    if not derived_values_equal(reference['bundle'], bundle) or not derived_values_equal(reference['template_audit'], audit):
+        raise BranchIntegrityError('Sealed reference labels differ from the frozen branch template')
 
 
 def rebuild_index(output):
@@ -223,6 +263,11 @@ def rebuild_index(output):
 
 def trial_record(output, manifest, planned, reference_path, factory, baseline):
     from services.robotwin.acceptance import derived_values_equal
+    if 'branch_spec' in manifest:
+        entries = [e for e in manifest['reference_artifacts'] if e['seed'] == planned['seed']]
+        if len(entries) != 1 or (output / entries[0]['path']).resolve() != reference_path.resolve():
+            raise BranchIntegrityError('Trial references an unbound branch scene')
+        verify_branch_entry(manifest, entries[0], output, manifest['template'])
     reference = json.loads(reference_path.read_text())
     commanded = intervene(reference['trajectory'], planned['case'])
     directory = output/'trials'/planned['trial_id']
@@ -295,6 +340,16 @@ def run(args):
 
     template = load_template(args.template)
     cases = selected_cases(args, template['task'])
+    branch_spec = None
+    if getattr(args, 'branch_spec', None) is not None:
+        branch_spec = json.loads(Path(args.branch_spec).read_text())
+        validate_branch_spec(branch_spec, template)
+        import os
+        validate_external_sources(branch_spec, template, os.environ['ROBOTWIN_PATH'])
+        if [getattr(args, k) for k in ('seed_start', 'seeds', 'max_seed_attempts', 'baseline_repeats')] != [branch_spec[k] for k in ('seed_start', 'seeds', 'max_seed_attempts', 'baseline_repeats')]:
+            raise BranchIntegrityError('CLI branch capture limits differ from frozen specification')
+        if getattr(args, 'case_preset', 'fixed_cases') != 'fixed_cases':
+            raise BranchIntegrityError('Branch development uses only the original18 fixed cases')
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     exclusions = training_exclusions(args.training_root)
     native_revision = source_commit()
@@ -307,6 +362,8 @@ def run(args):
                   driver_sha256=digest(__file__), replay_sha256=digest(ROOT/'services/robotwin/acceptance_replay.py'),
                   exclusions_sha256=json_digest(exclusions), alignment=ALIGNMENT, native_success_rule=SUCCESS_RULE)
     config['replay_adapter_version'] = BASE_FRAME_ADAPTER
+    if branch_spec is not None:
+        config.update(branch_spec=branch_spec, branch_policy=branch_policy_fingerprint())
     if getattr(args, 'case_preset', 'fixed_cases') == 'baseline_smoke':
         if args.seed_start in exclusions['excluded_training_seeds']:
             raise ValueError('Fixed metadata smoke seed overlaps training; do not choose another seed')
@@ -317,6 +374,8 @@ def run(args):
     if args.check_only:
         print(json.dumps(dict(check='passed', gpu_started=False, trials_per_seed=args.baseline_repeats+len(cases))))
         return 0
+    if branch_spec is not None and (output/'run.json').exists():
+        raise BranchIntegrityError('Branch attempts are immutable; no automatic resume or retry')
     if config.get('case_preset') == 'baseline_smoke' and (output/'run.json').exists():
         raise ValueError('Metadata smoke attempts are immutable; review failures in a new explicit plan')
     lock = (output/'.runner.lock').open('a')
@@ -352,7 +411,12 @@ def run(args):
             initialize_success_metadata(template['task'], native,
                                         expected_scene_sha256=scene_fingerprint(initial_scene(native)))
         except BaseException:
-            native.close_env()
+            try:
+                native.close_env()
+            except BaseException as exc:
+                if branch_spec is not None:
+                    raise BranchIntegrityError(f'Fresh factory cleanup failed: {exc}') from exc
+                raise
             raise
         return native
 
@@ -367,24 +431,32 @@ def run(args):
             run_state['status'] = 'capturing_references'; atomic_json(output/'run.json', run_state)
             for seed in range(args.seed_start, args.seed_start+args.max_seed_attempts):
                 if seed in excluded:
+                    if branch_spec is not None:
+                        bind(output/'reference_attempts'/f'seed{seed}.json', dict(task=template['task'], seed=seed,
+                             status='skipped_training_seed', native_actions_executed=False, branch_id=branch_spec['branch_id']))
                     continue
                 path = output/'references'/f'seed{seed}.json'
                 try:
                     if path.exists():
                         reference = json.loads(path.read_text())
                     else:
-                        if config.get('case_preset') == 'baseline_smoke':
+                        if branch_spec is not None:
+                            reference = capture_reference(factory, template, seed, scenes,
+                                attempt_path=output/'reference_attempts'/f'seed{seed}.json', branch_spec=branch_spec)
+                        elif config.get('case_preset') == 'baseline_smoke':
                             reference = capture_reference(factory, template, seed, scenes,
                                                           attempt_path=output/'reference_attempts'/f'seed{seed}.json')
                         else:
                             reference = capture_reference(factory, template, seed, scenes)
                         atomic_json(path, reference)
+                    if branch_spec is not None:
+                        seal_reference(path, output/'reference_receipts'/f'seed{seed}.json', branch_spec, template)
                     fingerprint = reference['provenance']['scene_sha256']
                     if fingerprint in scenes:
                         raise ValueError('Reference scene duplicates a training/selected scene')
                     references[seed] = path
                     scenes.add(fingerprint)
-                except (ReplayAdapterError, SuccessMetadataError):
+                except (ReplayAdapterError, SuccessMetadataError, BranchIntegrityError):
                     raise
                 except Exception as exc:
                     atomic_json(output/'reference_rejections'/f'seed{seed}.json',
@@ -404,6 +476,13 @@ def run(args):
                                                  for seed, path in references.items()])
             if 'success_metadata_policy' in config:
                 manifest['success_metadata_policy'] = config['success_metadata_policy']
+            if branch_spec is not None:
+                manifest.update(branch_spec=branch_spec, branch_policy=branch_policy_fingerprint(),
+                                purpose='fixed_reference_branch_development_not_acceptance')
+                for entry in manifest['reference_artifacts']:
+                    receipt_path = output/'reference_receipts'/f'seed{entry["seed"]}.json'
+                    entry.update(branch_receipt_path=str(receipt_path.relative_to(output)),
+                                 branch_receipt_sha256=digest(receipt_path))
             if config.get('case_preset') == 'baseline_smoke':
                 manifest['purpose'] = 'native_metadata_smoke_not_acceptance'
             bind(manifest_path, manifest)
@@ -457,6 +536,7 @@ def main():
     parser.add_argument('--baseline-repeats', default=2, type=int)
     parser.add_argument('--max-seed-attempts', default=30, type=int)
     parser.add_argument('--case-preset', choices=('fixed_cases', 'baseline_smoke'), default='fixed_cases')
+    parser.add_argument('--branch-spec', type=Path, help='Frozen original-active branch identity and finite bounds')
     parser.add_argument('--check-only', action='store_true')
     args = parser.parse_args()
     if args.seed_start < 0 or not 1 <= args.seeds <= 10 or args.baseline_repeats < 2 or args.max_seed_attempts < args.seeds:
