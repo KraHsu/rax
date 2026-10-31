@@ -1,0 +1,391 @@
+{
+  "purpose": "Paused research source snapshot; not a deployment bundle or new experimental authorization.",
+  "created_date": "2026-10-31",
+  "files": [
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/owner/ik_owner.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/owner/ik_owner.py",
+      "sha256": "b2133cd14b56d7a71b676c7ad9691097107a2000b1704c0665565a6912efdad6",
+      "bytes": 10724
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/runtime/contracts.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/runtime/contracts.py",
+      "sha256": "9f9af13cd1ba01bcb9985c3090c0a5ce67731e0ab182db8c90121c244803b999",
+      "bytes": 8029
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/runtime/driver.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/runtime/driver.py",
+      "sha256": "300cc43a09757c5174fc54e10e040fa19ca5fa34726652b099127265826a07de",
+      "bytes": 9726
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/runtime/geometry.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/runtime/geometry.py",
+      "sha256": "552791dd035207f6c411f5746b06a3a0bc7226e4b6f3f5d890731fc68ad638cc",
+      "bytes": 2562
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/runtime/gpu_backend.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/runtime/gpu_backend.py",
+      "sha256": "73771f90a8bee59ae671cbc84962053829645bf439007c6416499729576ccf8f",
+      "bytes": 11022
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/package/runtime/source_audit.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/package/runtime/source_audit.py",
+      "sha256": "48016d480027564c0a6f1359876d1a691421cc16de83e744334ad8611ec23123",
+      "bytes": 3461
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/test_acceptance_dev_owner.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/test_acceptance_dev_owner.py",
+      "sha256": "3a4085e737cf5c362442cb02f268ec433f834d874bd8ee2478b1db478ca92031",
+      "bytes": 6627
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/test_prelaunch_race.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/test_prelaunch_race.py",
+      "sha256": "1e91d987ab0bf442859249e00c4ac5933c2cc368716a316dc45a99dbc59e7a94",
+      "bytes": 5491
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_ik_feasibility_runtime_v1/test_runtime.py",
+      "archive": "cabinet_ik_feasibility_runtime_v1/test_runtime.py",
+      "sha256": "f9f8551a60347e038db686feb06e974d211860c18e3b35126558365690ffd08b",
+      "bytes": 15004
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/owner/ik_owner.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/owner/ik_owner.py",
+      "sha256": "1eaf61843c3e2497b01f007044a3ecba787a3ccf847fd545980f70aed5f862f2",
+      "bytes": 11140
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/contracts.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/contracts.py",
+      "sha256": "a2b047f4a646d9ebdcdda902e67c6746edc9bc6f69c6721a31de43cb5446a03c",
+      "bytes": 8707
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/driver.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/driver.py",
+      "sha256": "300cc43a09757c5174fc54e10e040fa19ca5fa34726652b099127265826a07de",
+      "bytes": 9726
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/geometry.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/geometry.py",
+      "sha256": "552791dd035207f6c411f5746b06a3a0bc7226e4b6f3f5d890731fc68ad638cc",
+      "bytes": 2562
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/gpu_backend.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/gpu_backend.py",
+      "sha256": "73771f90a8bee59ae671cbc84962053829645bf439007c6416499729576ccf8f",
+      "bytes": 11022
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/orientation_contract.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/orientation_contract.py",
+      "sha256": "2da47610e0e5d1c7cbd255b2b0b759cc189328062539458d5b9ee0ca889a267a",
+      "bytes": 12819
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/package/runtime/source_audit.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/package/runtime/source_audit.py",
+      "sha256": "48016d480027564c0a6f1359876d1a691421cc16de83e744334ad8611ec23123",
+      "bytes": 3461
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/test_acceptance_dev_owner.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/test_acceptance_dev_owner.py",
+      "sha256": "aedbd2ec29be743bae1c987ffc2a663ba76d1d5cb0c6df4878dc3efef2fccf5f",
+      "bytes": 6771
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/test_orientation_contract.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/test_orientation_contract.py",
+      "sha256": "e18bc0a03bcb5ea17abc2ada3d1da8482b3dac39d47bfe641362b63857e1bb03",
+      "bytes": 5299
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/test_prelaunch_race.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/test_prelaunch_race.py",
+      "sha256": "73e2847671ad32d349044379c0c44ebaeb326e32d351a5f7f59b2f6243bd9cf4",
+      "bytes": 5623
+    },
+    {
+      "source": "artifacts/constraint_refinement/cabinet_orientation_ik_runtime_v1/test_runtime.py",
+      "archive": "cabinet_orientation_ik_runtime_v1/test_runtime.py",
+      "sha256": "18b3da42c519f086f8837d2207946919a74b6a8ef18d65897075cd3f736ebf12",
+      "bytes": 14999
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/design/original/candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/design/original/candidate_design.py",
+      "sha256": "8b56bf8a1527691c04c3352ce449869a73269f749b58e0e0abfa2122938ad015",
+      "bytes": 9676
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/design/original/test_candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/design/original/test_candidate_design.py",
+      "sha256": "f755b0ab86c8b5387b128afc4be4ee2b24a9ff07fb5ec87689a9b5f2af0c1f42",
+      "bytes": 5542
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/owner/dual_bottle_owner.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/owner/dual_bottle_owner.py",
+      "sha256": "386d640940759fdbdd1d54bd33184bd1763177d95e0d3608c9d7c35c102946f8",
+      "bytes": 11580
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/candidate_design.py",
+      "sha256": "06c5f35b66fd2fd726c9725d0479af1fb06bfb5bafdde4b8a1aca517a63c7521",
+      "bytes": 9469
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/contracts.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/contracts.py",
+      "sha256": "aa1a076deeb5a0549d77e1255c92906edf01aa5db6cdd5c98b66cf425fe5499a",
+      "bytes": 12009
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/cpu_preflight.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/cpu_preflight.py",
+      "sha256": "aef3c38305923484b96c583dbf9a3701a39963ac0fba564a43f0e9c882b35ba2",
+      "bytes": 5867
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/driver.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/driver.py",
+      "sha256": "851333a26d6874677a34c8cf5512ff9fa2ae3ea660f3d762a1c69c88edd10c0c",
+      "bytes": 27258
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/predicate_observer.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/predicate_observer.py",
+      "sha256": "14f8b07319bc098fe073bfdec0086809b7e9e59fb5ca4a7b573040db5b67ea73",
+      "bytes": 12952
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/package/runtime/verifier.py",
+      "archive": "dual_bottle_finite_runtime_v1/package/runtime/verifier.py",
+      "sha256": "a6b0802b3bd2cf95783edfe535a3823800ed534de2a1340ecf2f836bf927fb63",
+      "bytes": 19585
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/test_acceptance_dev_owner.py",
+      "archive": "dual_bottle_finite_runtime_v1/test_acceptance_dev_owner.py",
+      "sha256": "09b233c87490d8fdb73018a20b28feb672c598b0d0fd4e7eda274b51cce509ab",
+      "bytes": 6659
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/test_prelaunch_race.py",
+      "archive": "dual_bottle_finite_runtime_v1/test_prelaunch_race.py",
+      "sha256": "58a299d504d167ab3dbe058bd5e6548b2423f0dadcbe7575f0c61bb158feb94f",
+      "bytes": 5568
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v1/test_runtime.py",
+      "archive": "dual_bottle_finite_runtime_v1/test_runtime.py",
+      "sha256": "2cf1151204d12a7b74318feae41f0ce7d9eb9b02177b92ca0f4e4c910340536e",
+      "bytes": 24885
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/design/original/candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/design/original/candidate_design.py",
+      "sha256": "8b56bf8a1527691c04c3352ce449869a73269f749b58e0e0abfa2122938ad015",
+      "bytes": 9676
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/design/original/test_candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/design/original/test_candidate_design.py",
+      "sha256": "f755b0ab86c8b5387b128afc4be4ee2b24a9ff07fb5ec87689a9b5f2af0c1f42",
+      "bytes": 5542
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/owner/dual_bottle_owner.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/owner/dual_bottle_owner.py",
+      "sha256": "9864c558e7e065a582b6cb5f0a895185fc1378e6a25e8039cc5f458cb90ff078",
+      "bytes": 11580
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/candidate_design.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/candidate_design.py",
+      "sha256": "dc9738b94e9cd6d885f17493fcda90796eb558203b264150a5193eda0cbb3c9b",
+      "bytes": 9921
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/contracts.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/contracts.py",
+      "sha256": "6792b9550255351c2117c7a5cd6b9e973972284a67d95fd86431cb1bb0afb6ce",
+      "bytes": 12009
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/cpu_preflight.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/cpu_preflight.py",
+      "sha256": "eafae3489748306dd31fec31b5daf2b11a5bc58b8f5573450844baf4289485a3",
+      "bytes": 6245
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/driver.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/driver.py",
+      "sha256": "463c79198059e4f44fcbeba32a83c1d7a58a08b31bab49fdde3d5b348891b2e2",
+      "bytes": 29058
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/predicate_observer.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/predicate_observer.py",
+      "sha256": "14f8b07319bc098fe073bfdec0086809b7e9e59fb5ca4a7b573040db5b67ea73",
+      "bytes": 12952
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/package/runtime/verifier.py",
+      "archive": "dual_bottle_finite_runtime_v2/package/runtime/verifier.py",
+      "sha256": "df98b2b4bb77ffca83e961fdff02090fb49bb01107a2010e87c1e5a9ed439573",
+      "bytes": 23269
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/test_acceptance_dev_owner.py",
+      "archive": "dual_bottle_finite_runtime_v2/test_acceptance_dev_owner.py",
+      "sha256": "89618848cbf5b8738d1cda1f5ceb5a851b576efc04de673c452111cea7ebc320",
+      "bytes": 6659
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/test_prelaunch_race.py",
+      "archive": "dual_bottle_finite_runtime_v2/test_prelaunch_race.py",
+      "sha256": "1fbb327848406f84d044774bebadf7343bd2b699650e20f888f4bb2208b00df8",
+      "bytes": 5568
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_finite_runtime_v2/test_runtime.py",
+      "archive": "dual_bottle_finite_runtime_v2/test_runtime.py",
+      "sha256": "b59088331022f4e2707fd8c448dbaf0d399160930a5c478b9a8e48d3c692d42c",
+      "bytes": 32235
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/analyze_aliases.py",
+      "archive": "dual_bottle_revision_v3/analyze_aliases.py",
+      "sha256": "2fb785c86d1c6b664ee18a0069bc49b4e992a9be767407679b9914db80668822",
+      "bytes": 4250
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/check_selected_training.py",
+      "archive": "dual_bottle_revision_v3/check_selected_training.py",
+      "sha256": "ac382bf0a35c6dcbcdfd776cf84374bc2df167d2b4972238076b1f1d024467d6",
+      "bytes": 8867
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/check_synthetic.py",
+      "archive": "dual_bottle_revision_v3/check_synthetic.py",
+      "sha256": "df5820c0e948f672ecb127a0bfbf63bf9e6807d7704df09a45260f6cad2f3305",
+      "bytes": 3313
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/common.py",
+      "archive": "dual_bottle_revision_v3/common.py",
+      "sha256": "e0d279438528571c634d7f720874c98a535b5b61062edcce5087930b891c532a",
+      "bytes": 4997
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/finalize.py",
+      "archive": "dual_bottle_revision_v3/finalize.py",
+      "sha256": "057ef69026cce3da345c2a98db24ea9e59cabadf49a8509dc12c0ece9734cc78",
+      "bytes": 11890
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/freeze_adaptive_plan.py",
+      "archive": "dual_bottle_revision_v3/freeze_adaptive_plan.py",
+      "sha256": "1f622ae3b5012972a402bef0a80aad804a14c6f0b160acd3c60adc37b8b37743",
+      "bytes": 1920
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/freeze_axial_plan.py",
+      "archive": "dual_bottle_revision_v3/freeze_axial_plan.py",
+      "sha256": "e87a1ee30eb3ab870704fbf7aa155719067af0ab12846a146422838a04ba2954",
+      "bytes": 1796
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/freeze_fallback_plan.py",
+      "archive": "dual_bottle_revision_v3/freeze_fallback_plan.py",
+      "sha256": "173b6f1899968e94e7cd5e9b5661d004eedcf9689bf3e1514e19a7f536c972a9",
+      "bytes": 2839
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/freeze_plan.py",
+      "archive": "dual_bottle_revision_v3/freeze_plan.py",
+      "sha256": "b3e964770139c011a36d44972bf19de949af76806e9e23e3265847a5e4d25323",
+      "bytes": 4538
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/score_adaptive.py",
+      "archive": "dual_bottle_revision_v3/score_adaptive.py",
+      "sha256": "c3f905cd633330b96be9883db7beeb72d782d5a9c9abf7652291353d5724a577",
+      "bytes": 4022
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/score_axial.py",
+      "archive": "dual_bottle_revision_v3/score_axial.py",
+      "sha256": "cd532ef425aa6e237ed076bec3dacc03c676f6d3c8521a04d7fba0f6b4515d25",
+      "bytes": 4447
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/score_candidates.py",
+      "archive": "dual_bottle_revision_v3/score_candidates.py",
+      "sha256": "adafa374700bacfccd22c5f3b8017d29ae9a5c53f3838ab0fe4fbc288d0c9fed",
+      "bytes": 9008
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/score_fallback.py",
+      "archive": "dual_bottle_revision_v3/score_fallback.py",
+      "sha256": "fafab7d776459dc341cacd5f9920374a0366815a2d455323c9fc47c4a69ca5e6",
+      "bytes": 4519
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/selected/alternative_TCP/template.json",
+      "archive": "dual_bottle_revision_v3/selected/alternative_TCP/template.json",
+      "sha256": "5dc3bf487fe8c08303b438beb1bb2cd5b709004dd35752aeb42d5c787857a7f0",
+      "bytes": 10380
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_bottle_revision_v3/selected/primary_axis/template.json",
+      "archive": "dual_bottle_revision_v3/selected/primary_axis/template.json",
+      "sha256": "d6fb87320bea9a4b6bc151dbb4a908ee1eef6b56cbb79d40c24cfcca24c555a7",
+      "bytes": 9771
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_shoes_command_index_baseline_v1/package/owner/baseline_owner.py",
+      "archive": "dual_shoes_command_index_baseline_v1/package/owner/baseline_owner.py",
+      "sha256": "c22d0147b8d16b401b4d91cd59efe861bd348be57b4d48db09163f92571909d2",
+      "bytes": 11600
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_shoes_command_index_baseline_v1/package/runtime/baseline_driver.py",
+      "archive": "dual_shoes_command_index_baseline_v1/package/runtime/baseline_driver.py",
+      "sha256": "af1a23fdcf48632775dd5ce498e104d1e5a68241c1a3da23e9847ec75e706114",
+      "bytes": 24185
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_shoes_command_index_baseline_v1/test_acceptance_dev_owner.py",
+      "archive": "dual_shoes_command_index_baseline_v1/test_acceptance_dev_owner.py",
+      "sha256": "cf9ffd96ef985a9fe38d7725a17de64a939a889c631d5fb3e194d93e4ac8b818",
+      "bytes": 6420
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_shoes_command_index_baseline_v1/test_baseline_runtime.py",
+      "archive": "dual_shoes_command_index_baseline_v1/test_baseline_runtime.py",
+      "sha256": "13e15ce157aa8b112a3df511b56f5eae0c22125881d0076f81b3bb2947e25fea",
+      "bytes": 10465
+    },
+    {
+      "source": "artifacts/constraint_refinement/dual_shoes_command_index_baseline_v1/test_prelaunch_race.py",
+      "archive": "dual_shoes_command_index_baseline_v1/test_prelaunch_race.py",
+      "sha256": "c9828b152c424f1c2468731cd6e433b688d9a6c39ffcfa06a23b973356873bc4",
+      "bytes": 5557
+    }
+  ],
+  "total_bytes": 625323
+}

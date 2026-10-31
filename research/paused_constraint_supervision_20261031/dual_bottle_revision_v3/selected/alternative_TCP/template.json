@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "task": "pick_dual_bottles",
+  "rationale": "Retain sparse measured features for both bottle picks: EEF location at reference closure, the closed command plateau, terminal upward displacement from closure, and a local terminal height usable without that earlier anchor. Bounds are recomputed per episode using the explicit operator priors; they are not calibrated grasp or physical feasibility regions. No required orientation, full-path position corridor, or inter-arm geometry is inferred.",
+  "signatures": [
+    [
+      "close",
+      "close"
+    ]
+  ],
+  "rules": [
+    {
+      "id": "closure_location",
+      "type": "point_distance_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "all"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Localize each EEF at its recorded closing threshold crossing around a fixed measured world point. This is an operator-prior reference-location envelope, not an object contact point or a verified grasp region. Development v2 calibration: explicit fixed-reference physical tolerance; original activation, frame, penalty scale and weight retained. This allows variation, not proof of contact or success. V3 coarse exposed-development candidate; fixed reference activation and penalty scale preserved; no object-state labels.",
+      "allowed_margin": {
+        "lower": 0.021,
+        "upper": 0.021,
+        "unit": "m"
+      }
+    },
+    {
+      "id": "closed_gripper",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "closed",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Preserve the measured closed command during the subsequent bottle lift and terminal hold. Command fraction alone establishes neither finger distance nor force, contact, or retention. Development v2 calibration: explicit fixed-reference physical tolerance; original activation, frame, penalty scale and weight retained. This allows variation, not proof of contact or success.",
+      "allowed_margin": {
+        "lower": 0.25,
+        "upper": 0.25,
+        "unit": "fraction"
+      }
+    },
+    {
+      "id": "terminal_lift",
+      "type": "axis_displacement_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "start_anchor": "first_close",
+      "rationale": "Measure the terminal EEF rise along world positive Z relative to its first recorded closure. This endpoint constraint does not impose a monotone lift path or measure bottle clearance. The original closure anchor must be inside the training chunk. Development v2 calibration: explicit fixed-reference physical tolerance; original activation, frame, penalty scale and weight retained. This allows variation, not proof of contact or success.",
+      "allowed_margin": {
+        "lower": 0.02,
+        "upper": 0.02,
+        "unit": "m"
+      }
+    },
+    {
+      "id": "terminal_height",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "terminal"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "rationale": "Retain the demonstrated final EEF height as a local endpoint feature when the closure-to-terminal displacement is masked because its anchor is outside the chunk. Leave terminal horizontal position and orientation free; height alone does not prove bottle support or retention. Development v2 calibration: explicit fixed-reference physical tolerance; original activation, frame, penalty scale and weight retained. This allows variation, not proof of contact or success.",
+      "allowed_margin": {
+        "lower": 0.02,
+        "upper": 0.02,
+        "unit": "m"
+      }
+    },
+    {
+      "subjects": "active_arms",
+      "required": true,
+      "id": "dev_reference_open",
+      "type": "gripper_interval",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "open",
+        "after": "episode_start"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "allowed_margin": {
+        "lower": 0.4,
+        "upper": 0.4,
+        "unit": "fraction"
+      },
+      "rationale": "Require an open-command fraction on stable fully-open fixed-reference plateaus; allow explicit timing slack in fraction space. This cannot assert contact or physical finger aperture. Generated events never control activation. V3 coarse exposed-development candidate; fixed reference activation and penalty scale preserved; no object-state labels."
+    },
+    {
+      "subjects": "active_arms",
+      "required": true,
+      "id": "dev_first_close_event_axis1",
+      "type": "axis_angle_interval",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "first"
+      },
+      "origin": "world",
+      "orientation": "selection_start",
+      "parameters": {
+        "local_axis": [
+          0,
+          1,
+          0
+        ],
+        "reference_axis": [
+          0,
+          1,
+          0
+        ]
+      },
+      "allowed_margin": {
+        "lower": 0.20943951023931956,
+        "upper": 0.20943951023931956,
+        "unit": "rad"
+      },
+      "rationale": "Reference-frame EEF axis relation with explicit angular freedom at reference closure or fixed closed plateaus. Rotation about this chosen local axis remains free. This is a grasp-direction hypothesis, not an observed contact normal."
+    },
+    {
+      "subjects": "active_arms",
+      "required": true,
+      "id": "dev_tcp_closure",
+      "type": "point_distance_interval",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "first"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {
+        "local_point": {
+          "frame": "subject_eef",
+          "offset_m": [
+            0.12,
+            0.0,
+            0.0
+          ],
+          "provenance": {
+            "source": "known_geometry",
+            "reference": "/mnt/data/liangjiaqi/RoboTwin/envs/robot/robot.py:591-602,622-637",
+            "sha256": "1f4d0284eaf47fe5de2c0ba98a173b78beb83f2f2cc43409d37072a4774df4c8",
+            "rationale": "Native get_ee_pose uses is_endpose=False, subtracting0.12m from localX; get_tcp_pose usesTrue with the same rotation. Therefore TCP=EEF+R*[0.12,0,0]. This is the native gripper-center marker, not a fitted contact or finger surface."
+          }
+        }
+      },
+      "allowed_margin": {
+        "lower": 0.04,
+        "upper": 0.04,
+        "unit": "m"
+      },
+      "rationale": "Bound only the native rigid TCP marker at the fixed first reference closure. The .12m localX offset is mechanical geometry; its region is an explicit development hypothesis, not a fitted contact point or proof of bottle grasp. V3 conjunction retains the existing localY relation and all ordinary motion guards."
+    },
+    {
+      "id": "dev_closure_worldX",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "first"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          1,
+          0,
+          0
+        ]
+      },
+      "allowed_margin": {
+        "lower": 0.015,
+        "upper": 0.015,
+        "unit": "m"
+      },
+      "required": true,
+      "rationale": "A single world-X coordinate interval centered on the fixed reference closure point, conjoined with existing radial/angle/TCP constraints. Task world frame and mechanical TCP provenance are explicit. No newwhole-pathXYZ box and no objects/native labels used by loss. Exposed-development hypothesis, not object-clearance proof."
+    }
+  ],
+  "motion_coverage": {
+    "version": 1,
+    "task": "pick_dual_bottles",
+    "mode": "independent",
+    "rationale": "Explicit migration preserves the legacy reference position-rule replacement masks; later geometry is conjoined with ordinary motion.",
+    "exemptions": [
+      {
+        "rule_id": "closure_location",
+        "primitive": "point_distance_interval",
+        "rationale": "This original rule replaced ordinary motion under the legacy position-coverage policy; freeze its identity and primitive, not episode frame numbers.",
+        "provenance": {
+          "source": "template_migration",
+          "reference": "programmatic_template:pick_dual_bottles:2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d",
+          "sha256": "2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d"
+        }
+      },
+      {
+        "rule_id": "terminal_lift",
+        "primitive": "axis_displacement_interval",
+        "rationale": "This original rule replaced ordinary motion under the legacy position-coverage policy; freeze its identity and primitive, not episode frame numbers.",
+        "provenance": {
+          "source": "template_migration",
+          "reference": "programmatic_template:pick_dual_bottles:2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d",
+          "sha256": "2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d"
+        }
+      },
+      {
+        "rule_id": "terminal_height",
+        "primitive": "axis_position_interval",
+        "rationale": "This original rule replaced ordinary motion under the legacy position-coverage policy; freeze its identity and primitive, not episode frame numbers.",
+        "provenance": {
+          "source": "template_migration",
+          "reference": "programmatic_template:pick_dual_bottles:2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d",
+          "sha256": "2593c1fee8b6bbba30b456a53c50ee1cbcfea06dfc09223af3cd05cd0f972a1d"
+        }
+      }
+    ]
+  },
+  "coverage_policy": {
+    "direction_slack_m": 0.0025,
+    "hold_margin_m": 0.021
+  }
+}
