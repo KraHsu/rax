@@ -5,6 +5,7 @@ may be exception unwind; only a recognized returned status is classified.
 """
 import hashlib
 import inspect
+import json
 from pathlib import Path
 import sys
 import threading
@@ -14,7 +15,10 @@ import numpy as np
 
 from services.robotwin.instruction_metadata import audited_native_source
 
-VERSION = 'readonly_expert_planner_requests_v1'
+VERSION = 'readonly_expert_planner_requests_v2'
+STATUS_CODEC = 'bounded_planner_status_strings_v1'
+MAX_STATUS_ITEMS = 4096
+MAX_STATUS_STRING_LENGTH = 256
 TASK = 'put_object_cabinet'
 SOURCE_SHA256 = {
     TASK: '4c705f50df805965acad4d09257dc58af1aa3ecc903d3c34d117aa1b155d0b64',
@@ -35,6 +39,9 @@ def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def policy():
     return dict(version=VERSION, task=TASK, source_sha256=SOURCE_SHA256,
                 implementation_sha256=sha(__file__), max_events=2000,
+                status_codec=dict(version=STATUS_CODEC,max_items=MAX_STATUS_ITEMS,
+                                  max_string_codepoints=MAX_STATUS_STRING_LENGTH,
+                                  object_array='exact ndarray, one dimensional, nonempty, exact Python str elements'),
                 scope='Source-bound robot/base/task Python methods on the owner thread; no solver/GPU state reads')
 
 
@@ -68,6 +75,74 @@ def returned_status(value):
     if type(status) in (tuple,list) and status and all(type(x) is str for x in status):
         return dict(values=list(status),all_success=all(x=='Success'for x in status))
     return None
+
+
+def _status_strings(values):
+    return (type(values)is list and 0<len(values)<=MAX_STATUS_ITEMS
+            and all(type(x)is str and 0<len(x)<=MAX_STATUS_STRING_LENGTH for x in values))
+
+
+def _status_content_hash(shape,values):
+    # Object-array bytes contain pointers, not portable string content.
+    payload=dict(codec=STATUS_CODEC,dtype='object',shape=shape,values=values)
+    return hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':'),ensure_ascii=True).encode('ascii')).hexdigest()
+
+
+def encode_request_return(value):
+    """Retain only bounded exact-string object arrays in the status field.
+
+    The generic CPU serializer still rejects every other object array. No
+    str/repr/item/device conversion or mutation of a returned object is used.
+    """
+    retained=cpu_value(value)
+    if type(value)is not dict or 'status'not in value:return retained
+    status=value['status']
+    if type(status)is np.ndarray and status.dtype.kind=='O':
+        if status.ndim==1 and 0<status.size<=MAX_STATUS_ITEMS:
+            values=list(status.flat)
+            if _status_strings(values):
+                shape=list(status.shape)
+                retained['status']=dict(observed=True,kind=STATUS_CODEC,dtype='object',shape=shape,
+                    values=values,content_sha256=_status_content_hash(shape,values))
+                return retained
+        retained['status']=dict(observed=False,reason='unsupported_object_status_array',
+                                shape=list(status.shape),dtype=str(status.dtype))
+    return retained
+
+
+def retained_status(value):
+    """Return (classification, error) from the retained CPU evidence alone."""
+    if value is None:return None,None  # Python return/unwind remains ambiguous.
+    if type(value)is not dict or 'status'not in value:return None,'missing_or_unrecognized_status'
+    raw=value['status']
+    if type(raw)is dict and raw.get('kind')==STATUS_CODEC:
+        required={'observed','kind','dtype','shape','values','content_sha256'}
+        if set(raw)!=required or raw['observed']is not True or raw['dtype']!='object':
+            return None,'invalid_object_status_codec'
+        shape=raw['shape'];values=raw['values']
+        if (type(shape)is not list or len(shape)!=1 or type(shape[0])is not int
+                or not _status_strings(values)or shape[0]!=len(values)):
+            return None,'invalid_object_status_shape_or_values'
+        if raw['content_sha256']!=_status_content_hash(shape,values):return None,'object_status_content_hash_mismatch'
+    elif type(raw)is dict and raw.get('kind')=='numpy':
+        # Preserve existing Unicode ndarray semantics, verifying the retained
+        # array's shape and byte hash rather than trusting its derived label.
+        try:
+            dtype=np.dtype(raw['dtype']);shape=raw['shape'];values=raw['values']
+            if (raw.get('observed')is not True or dtype.kind!='U' or dtype.itemsize>4*MAX_STATUS_STRING_LENGTH or type(shape)is not list
+                    or len(shape)>1 or any(type(n)is not int or n<0 or n>MAX_STATUS_ITEMS for n in shape)):
+                return None,'unsupported_numpy_status'
+            sequence=[values]if shape==[] else values
+            if not _status_strings(sequence):return None,'invalid_numpy_status_values'
+            array=np.asarray(values,dtype=dtype)
+            if list(array.shape)!=shape or array.tolist()!=values or hashlib.sha256(array.tobytes(order='C')).hexdigest()!=raw['sha256']:
+                return None,'numpy_status_content_mismatch'
+            values=sequence
+        except (ValueError,TypeError,KeyError,OverflowError):return None,'invalid_numpy_status_codec'
+    else:
+        values=[raw]if type(raw)is str else raw
+        if not _status_strings(values):return None,'unobserved_or_unsupported_status'
+    return dict(values=list(values),all_success=all(x=='Success'for x in values)),None
 
 
 class ExpertPlannerObserver:
@@ -118,11 +193,14 @@ class ExpertPlannerObserver:
             else:
                 entry=self.pending.pop(key,None)
                 if entry is None:self.errors.append('return_without_observed_call');return
-                status=returned_status(arg) if name in REQUESTS else None
+                retained=encode_request_return(arg)if name in REQUESTS else cpu_value(arg)
+                status,error=retained_status(retained)if name in REQUESTS else(None,None)
                 row=dict(event='return_or_unwind',call_id=entry['call_id'],method=name,source=source,line=frame.f_lineno,
-                         plan_success=flag if type(flag)is bool else None,returned_cpu_value=cpu_value(arg),
-                         returned_status=status,parameters_at_return={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
+                         plan_success=flag if type(flag)is bool else None,returned_cpu_value=retained,
+                         returned_status=status,status_observation_error=error,
+                         parameters_at_return={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
                 self._append(row)
+                if error is not None:self.errors.append('unobserved_status:'+str(entry['call_id'])+':'+error)
                 if status is not None and not status['all_success']:
                     self.last_non_success=entry['call_id']
                     if self.first_non_success is None:self.first_non_success=entry['call_id']

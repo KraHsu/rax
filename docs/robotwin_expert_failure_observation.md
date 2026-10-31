@@ -11,3 +11,13 @@ Cabinet terminal evidence preserves original native_success=None when the origin
 Source hashes, old failed records, training exclusions, exposed development seed and production numeric context are preflight inputs. Execution additionally requires a separately frozen owner with a shared GPU lease, foreign-process refusal, bounded wait/execution and inherited guardian lease. Default/check-only never initializes a native scene. Only a reviewed exact package may be launched by the parent agent.
 
 The observation adds wall-clock CPU work and is not a native instrumented/uninstrumented A/B equivalence proof. Ordinary observer errors are separate from original capture errors. Existing legacy BaseException/cleanup behavior is retained; no claim of unconditional cleanup under process kill is made.
+
+## Future-only planner status codec, version 2
+
+The first cabinet observation failed its final integrity check: five batch planner returns used object-dtype status arrays. Version1 retained their derived labels but omitted the original string contents. Those arrays cannot be recovered from the frozen evidence. The old failed output, index and original `planner_success=False` / `native_success=None` remain unchanged.
+
+Version2 permits object arrays only in a source-bound request's `status` field: an exact NumPy ndarray, one dimension, 1–4096 exact Python strings, each 1–256 Unicode codepoints. It stores shape, dtype and values with a deterministic JSON-content SHA256. Object-pointer bytes are never hashed. Generic object arrays remain unobserved; custom objects are never converted with `str`, `repr`, `item`, array coercion or a device transfer. Scalar strings and bounded Unicode arrays retain their classifications.
+
+The observer and offline verifier derive status through the same retained-value decoder. Malformed, mixed, missing or oversized status values produce an explicit observation error and incomplete scope, rather than success or an absent failure. A true Python `None` return remains ambiguous between return and exception unwind. Content/shape/hash tampering and dropped derived failure labels are rejected. The policy version, codec limits and implementation fingerprint change, so old manifests cannot silently adopt this revision.
+
+The native regression fixture is a compressed byte-exact copy of the 92-event failed profile. It must continue to expose the five irrecoverable raw-status gaps. Synthetic array tests validate future recording only; they never substitute values into the historical events. This fix neither resolves the cabinet's physical planning failure nor authorizes another native episode.

@@ -1,0 +1,18 @@
+{
+  "kind": "immutable_native_v1_failure_regression",
+  "original_profile_sha256": "016965a4aec8d400c219a005d4625ea437f86773a0a5764330ade166d0af7df7",
+  "compressed_fixture_sha256": "5a7e85a11cfb9b04e4a468405afea1f84c4b5c983ad5b9345bb971dc36fd8f8e",
+  "source": "artifacts/constraint_refinement/expert_failure_observation_v1/result_evidence/cabinet_expert_observation_v1/runs/put_object_cabinet/planner_observation.json",
+  "source_commit": "19620d792353ac737b3b46488cdc284a95a8a8af",
+  "original_full_verifier_passed": false,
+  "original_planner_success": false,
+  "original_native_success": null,
+  "missing_raw_status_calls": [
+    4,
+    5,
+    6,
+    14,
+    15
+  ],
+  "derived_values_are_not_reconstructed_raw": true
+}

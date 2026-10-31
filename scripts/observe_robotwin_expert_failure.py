@@ -16,7 +16,7 @@ from services.robotwin.collection import atomic_json,initial_scene,scene_fingerp
 from services.robotwin.success_metadata import initialize_success_metadata,metadata_policy  # noqa: E402
 from services.robotwin import expert_terminal_evidence as shoes  # noqa: E402
 from services.robotwin import cabinet_terminal_evidence as cabinet  # noqa: E402
-from services.robotwin.expert_planner_observer import ExpertPlannerObserver,REQUESTS,returned_status,policy as planner_policy  # noqa: E402
+from services.robotwin.expert_planner_observer import ExpertPlannerObserver,REQUESTS,retained_status,policy as planner_policy  # noqa: E402
 from services.robotwin.control_timing_observer import file_hash  # noqa: E402
 from scripts import validate_robotwin_constraint_acceptance as legacy  # noqa: E402
 
@@ -144,6 +144,7 @@ def run_one(output,design,template,excluded,base_factory):
 
 
 def validate_planner_receipt(receipt,frozen):
+    if frozen!=planner_policy():raise ValueError('Planner observation policy/source changed; legacy missing values cannot be upgraded')
     if (receipt.get('version')!=frozen['version']or receipt.get('policy')!=frozen or receipt.get('formal_evidence_eligible')is not False
             or receipt.get('original_arguments_modified')is not False or receipt.get('control_methods_wrapped')is not False
             or receipt.get('all_process_or_solver_calls_observed')is not False
@@ -159,10 +160,11 @@ def validate_planner_receipt(receipt,frozen):
             if cid not in calls or cid in returned:raise ValueError('Unpaired/duplicate return')
             returned.add(cid)
             entry=calls[cid];status=row['returned_status']
-            raw_value=row['returned_cpu_value'];raw=raw_value.get('status')if type(raw_value)is dict else None
-            if type(raw)is dict and raw.get('kind')=='numpy':raw=raw.get('values')
-            expected_status=returned_status({'status':raw})if row['method']in REQUESTS else None
+            expected_status,error=retained_status(row['returned_cpu_value'])if row['method']in REQUESTS else(None,None)
             if status!=expected_status:raise ValueError('Status differs from retained returned CPU value')
+            if row.get('status_observation_error')!=error:raise ValueError('Status observation error differs from retained evidence')
+            if error is not None and('unobserved_status:'+str(cid)+':'+error)not in receipt['errors']:
+                raise ValueError('Missing status evidence cannot claim complete observation')
             if status is not None:
                 if not status['all_success']:
                     last=cid
