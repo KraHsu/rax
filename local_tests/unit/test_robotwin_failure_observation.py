@@ -117,6 +117,7 @@ def test_real_source_control_arguments_and_return_objects_unchanged(monkeypatch)
 
 
 def test_first_failed_request_separate_from_first_fatal_native_scope(monkeypatch):
+    from scripts.observe_robotwin_expert_failure import validate_planner_receipt
     n=planner_native(monkeypatch);n.robot.left_planner=SimpleNamespace(plan_path=lambda *a,**k:{'status':'Failure'})
     obs=planner.ExpertPlannerObserver(n,frozen_policy=planner.policy()).start()
     try:
@@ -127,6 +128,12 @@ def test_first_failed_request_separate_from_first_fatal_native_scope(monkeypatch
     r=obs.receipt();assert r['first_non_success_request_id']==1
     assert r['first_true_to_false_scope']['method']=='left_move_to_pose'
     assert r['first_true_to_false_scope']['call_id']!=r['first_non_success_request_id']
+    assert r['first_true_to_false_scope']['last_recognized_non_success_request']==3
+    validate_planner_receipt(r,planner.policy())
+    changed=deepcopy(r)
+    changed['first_true_to_false_scope']['last_recognized_non_success_request']=1
+    with pytest.raises(ValueError,match='Fatal scope attribution'):
+        validate_planner_receipt(changed,planner.policy())
 
 
 def test_exception_unwind_preserves_original_exception_and_is_not_failure_status(monkeypatch):
