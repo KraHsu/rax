@@ -13,7 +13,7 @@ import traceback
 import numpy as np
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from services.robotwin.collection import atomic_json,initial_scene,scene_fingerprint  # noqa: E402
-from services.robotwin.success_metadata import initialize_success_metadata,metadata_policy  # noqa: E402
+from services.robotwin.success_metadata import MARKER,initialize_success_metadata,metadata_policy,validate_metadata_receipt  # noqa: E402
 from services.robotwin import expert_terminal_evidence as shoes  # noqa: E402
 from services.robotwin import cabinet_terminal_evidence as cabinet  # noqa: E402
 from services.robotwin.expert_planner_observer import ExpertPlannerObserver,REQUESTS,retained_status,policy as planner_policy  # noqa: E402
@@ -123,6 +123,26 @@ def commit_index(output):
     atomic_json(output/'artifact_index.json',dict(kind=KIND,files=files))
 
 
+def retain_targeted_initial_state(output,native,design,scene_sha256):
+    """Persist the already-created fresh metadata snapshot, without new getters."""
+    receipt=native.__dict__.get(MARKER)
+    validate_metadata_receipt(design['task'],receipt,scene_sha256,policy=design['success_metadata_policy'])
+    atomic_json(output/'expert_initial_success_metadata.json',receipt)
+    atomic_json(output/'expert_initial_physical_state.json',receipt['fresh_state'])
+
+
+def validate_targeted_initial_state(output,design,attempt,*,required):
+    metadata=output/'expert_initial_success_metadata.json';state=output/'expert_initial_physical_state.json'
+    if metadata.exists()!=state.exists():raise ValueError('Partial initial physical evidence')
+    if not metadata.exists():
+        if required:raise ValueError('Initial physical evidence omitted')
+        return
+    receipt=read(metadata)
+    validate_metadata_receipt(design['task'],receipt,receipt['scene_before'],policy=design['success_metadata_policy'])
+    if read(state)!=receipt['fresh_state']:raise ValueError('Initial state differs from stored metadata')
+    if required and(receipt['scene_before']!=design['expected_scene_sha256']or attempt.get('success_metadata')!=receipt):raise ValueError('Initial state/attempt identity changed')
+
+
 def run_one(output,design,template,excluded,base_factory):
     """Exactly one legacy expert capture; every exit retains original evidence."""
     task=design['task'];seed=design['seed'];observer=None;calls=0
@@ -136,6 +156,8 @@ def run_one(output,design,template,excluded,base_factory):
         native=base_factory(fixed_seed)
         try:
             scene=initial_scene(native)
+            if design.get('targeted_observation_version')==TARGETED_VERSION:
+                retain_targeted_initial_state(output,native,design,scene_fingerprint(scene))
             if scene_fingerprint(scene)!=design['expected_scene_sha256']:raise ValueError('Initial scene differs from original failed scene')
             if task=='put_object_cabinet':observer=ExpertPlannerObserver(native,frozen_policy=design['planner_policy']).start()
         except BaseException:
@@ -248,6 +270,8 @@ def verify_output(output,design_hash,expected_design):
             or run['expert_attempts_started']not in (0,1)or run['legacy_replays']!=0 or run['automatic_retries']!=0 or run['native_result_replaced']is not False):raise ValueError('Episode budget/identity changed')
     attempt=read(output/'expert_attempt.json')
     if attempt['task']!=task or attempt['seed']!=design['seed']:raise ValueError('Wrong original attempt')
+    if design.get('targeted_observation_version')==TARGETED_VERSION:
+        validate_targeted_initial_state(output,design,attempt,required=run['expert_attempts_started']==1)
     complete=False
     if attempt.get('terminal_observer_invoked')is True and not attempt.get('terminal_observation_error')and not attempt.get('cleanup_error'):
         if attempt['scene_sha256']!=design['expected_scene_sha256']:raise ValueError('Wrong failed-scene identity')

@@ -78,3 +78,30 @@ The audited wrapper builds a planning world containing a hard-coded table
 cuboid (native `planner.py:338–356`). A future `WORLD_COLLISION` category is a
 report about that planner's configured world/model. It cannot by itself prove
 contact with the physical cabinet, which is not established by this evidence.
+
+### Targeted cabinet finite package integration
+
+`targeted_observation_version=cabinet_scalar_result_v3_one_shot_v1` requires
+explicit v3 scalar-result opt-in and two distinct immutable failed seed-10050
+attempts: the metadata smoke and the earlier expert-only observation. Their
+source paths, copied input bytes and hashes are checked together. The history
+budget is two previous initializations plus at most one new initialization,
+with zero replay/retry. This is a diagnostic repetition and does not replace
+or upgrade either earlier failure.
+
+Before binding the actual planner observer, this mode persists the **already
+stored** fresh-success-metadata receipt and its complete physical snapshot.
+It invokes no additional physical getter. This retains the initial evidence
+if actual runtime type/source compatibility fails before expert actions.
+Such failure consumes the one initialization, starts zero experts, preserves
+the original error, closes the native environment and never retries. Output
+verification checks the two initial files even for incomplete observations;
+when expert execution started, the receipt must also match the attempt's
+fresh metadata and the frozen scene.
+
+A GPU-free preflight cannot import the full installed cuRobo motion module:
+its `plan_grasp` default `Pose.from_list` expressions allocate on CUDA at module
+load. Source-hash/AST dataclass and constructor checks are therefore labelled
+CPU evidence only. Actual source/type/method bindings are checked after the
+sole authorized native setup, before any expert control. No module-import or
+native-constructor success is claimed from the CPU probe.

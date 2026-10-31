@@ -43,3 +43,54 @@ def test_targeted_history_rejects_budget_identity_or_source_changes(tmp_path,cha
         p=tmp_path/'old2.json';x=json.loads(p.read_text());x['native_success']=False;p.write_text(json.dumps(x));sha=driver.file_hash(p)
         e=h['sources'][1];e['sha256']=sha;d['input_files'][e['input_file']]=sha;d['external_files'][e['source_path']]=sha
     with pytest.raises(ValueError):driver.validate_targeted_history(tmp_path,d,h)
+
+
+from test_robotwin_failure_observation import terminal_native
+from services.robotwin.success_metadata import MARKER,fresh_physical_state
+
+
+def state_fixture(monkeypatch):
+    n,_,_=terminal_native(monkeypatch)
+    receipt=n.__dict__[MARKER]
+    d=dict(task='put_object_cabinet',success_metadata_policy=receipt['policy'],expected_scene_sha256=receipt['scene_before'])
+    return n,d,receipt
+
+
+def test_initial_state_reuses_existing_metadata_without_any_physical_getter(monkeypatch,tmp_path):
+    n,d,receipt=state_fixture(monkeypatch)
+    before=deepcopy(n.__dict__[MARKER])
+    def forbid(*a,**k):raise AssertionError('No additional physical access')
+    n.scene.get_all_actors=forbid;n.scene.get_all_articulations=forbid;n.scene.step=forbid
+    driver.retain_targeted_initial_state(tmp_path,n,d,d['expected_scene_sha256'])
+    driver.validate_targeted_initial_state(tmp_path,d,dict(success_metadata=receipt),required=True)
+    assert n.__dict__[MARKER]==before
+
+
+@pytest.mark.parametrize('change',['physical','receipt','missing','attempt','scene'])
+def test_initial_state_and_attempt_binding_rejects_tamper(monkeypatch,tmp_path,change):
+    n,d,r=state_fixture(monkeypatch);driver.retain_targeted_initial_state(tmp_path,n,d,d['expected_scene_sha256'])
+    attempt=dict(success_metadata=r)
+    if change=='physical':driver.atomic_json(tmp_path/'expert_initial_physical_state.json',{})
+    elif change=='receipt':
+        x=deepcopy(r);x['fresh_state_sha256']='0'*64;driver.atomic_json(tmp_path/'expert_initial_success_metadata.json',x)
+    elif change=='missing':(tmp_path/'expert_initial_physical_state.json').unlink()
+    elif change=='attempt':attempt['success_metadata']=None
+    else:d['expected_scene_sha256']='0'*64
+    with pytest.raises(ValueError):driver.validate_targeted_initial_state(tmp_path,d,attempt,required=True)
+
+
+def test_actual_binding_failure_consumes_only_init_retains_initial_state(monkeypatch,tmp_path):
+    n,d,r=state_fixture(monkeypatch);calls=[];closed=[];before=fresh_physical_state(n)
+    n.close_env=lambda:closed.append(True)
+    d.update(kind=driver.KIND,seed=10050,targeted_observation_version=driver.TARGETED_VERSION,planner_solver_details=True,planner_policy=driver.planner_policy(solver_details=True),**driver.FLAGS)
+    def factory(seed):calls.append(seed);return n
+    def reject(*a,**k):raise ValueError('actual source/type binding incompatibility')
+    monkeypatch.setattr(driver,'ExpertPlannerObserver',reject)
+    driver.atomic_json(tmp_path/'observation_manifest.json',dict(kind=driver.KIND,design=d,design_sha256='d'*64,**driver.FLAGS))
+    result=driver.run_one(tmp_path,d,dict(task='put_object_cabinet'),dict(excluded_training_scene_sha256=[]),factory)
+    assert calls==[10050]and closed==[True]and result['native_initializations_started']==1
+    assert result['expert_attempts_started']==0 and result['legacy_replays']==0 and result['status']=='observation_incomplete'
+    assert 'binding incompatibility'in result['original_capture_error']['message']
+    assert fresh_physical_state(n)==before
+    assert (tmp_path/'expert_initial_physical_state.json').exists()
+    driver.verify_output(tmp_path,'d'*64,d)
