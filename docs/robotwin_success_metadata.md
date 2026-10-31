@@ -5,6 +5,8 @@
 that field. `put_object_cabinet` similarly needs `arm_tag` and the initial
 `origin_z`, which its setup does not assign. A successful expert reference does
 not initialize a later, newly constructed replay or model environment.
+`place_object_scale` has the same missing `arm_tag`: its success predicate checks
+whether the initially selected object's carrier gripper is open.
 
 The source-bound adapter in `services/robotwin/success_metadata.py` reproduces
 only these initial assignments:
@@ -13,12 +15,22 @@ only these initial assignments:
 | --- | --- |
 | `open_laptop` | Rotate local X by the laptop root quaternion. Positive dot with world X selects left; zero or negative selects right. |
 | `put_object_cabinet` | Initial object X greater than zero selects right; otherwise left. Preserve the initial object Z scalar and its native dtype. |
+| `place_object_scale` | Initial object X greater than zero selects right; otherwise left. Assign the source-bound native `ArmTag`, without adding `origin_z`. |
 
-The task source SHA256 values are `ec5f6e22…` and `4c705f50…`. The `ArmTag` class
+The task source SHA256 values are `ec5f6e22…`, `4c705f50…` and `37415b6f…`, respectively. The `ArmTag` class
 and the pure `get_face_prod` helper are independently source-bound. The adapter
 calls neither `get_info`, `play_once`, motion, the success predicate nor a scene
 step. It changes only the declared instance fields and an audit marker. Native
 classes, source files and success predicates remain unchanged.
+
+For scale, the audited source supports mouse, stapler and bell objects and scale
+model IDs 0, 1, 5 and 6. Receipt validation binds the initial object position and
+dtype to one named physical actor, checks the unique scale actor, and reconstructs
+the original instruction tokens. The original native predicate remains XY
+distance below 35 mm, object height above scale point Z minus 10 mm, and the
+initial carrier gripper open. It does not require contact, support, weight or an
+upper object-height bound. Moving the object across X=0 later cannot change the
+selected hand. No constraint template is changed by this initialization fix.
 
 Call `initialize_success_metadata(task, native, expected_scene_sha256=...)`
 immediately after every fresh `setup_demo`, before any actions. The fixed-case,
@@ -61,7 +73,7 @@ Evidence and release checks:
 - Fixed-case references and completed replay outcomes retain `success_metadata`;
   acceptance verifies both against the manifest and frozen scene.
 - Search retains original source bytes, verifies source and working reference
-  receipts, and checks each completed native outcome. The two tasks' old
+  receipts, and checks each completed native outcome. Supported tasks' old
   references without initialization proof cannot be relabeled as new evidence.
 - The model collector records the second environment's receipt in
   `source_run.json`; raw model evidence verification checks it and its policy.
@@ -79,7 +91,8 @@ tampering, and the no-resampling error path. Separate native-Python CPU probes
 exercise real SAPIEN entities/components without creating a Scene or renderer.
 
 For the first native factory smoke, the validator supports the explicit
-`--case-preset baseline_smoke` for these two tasks only. It requires `--seeds 1`,
+`--case-preset baseline_smoke` for `open_laptop` and `put_object_cabinet` only
+(scale support does not expand that preset). It requires `--seeds 1`,
 `--max-seed-attempts 1` and `--baseline-repeats 2`: one fixed seed, one reference
 attempt, and at most two baseline replays. The second replay runs only if the
 first passes the existing baseline gate. Reference failures retain their initial

@@ -19,6 +19,8 @@ from services.robotwin.success_metadata import (DEPENDENCY_SHA256, MARKER, SOURC
                                                 validate_metadata_policy, validate_metadata_receipt, SuccessMetadataError)
 
 FIXTURES = Path(__file__).parents[1]/'fixtures/robotwin_success_metadata'
+OPENWAM = next(parent/'OpenWAM' for parent in Path(__file__).resolve().parents
+               if (parent/'OpenWAM/scripts/robotwin_constraint_policy_candidates.py').is_file())
 
 
 def load_node(path, name, monkeypatch, **globals_):
@@ -68,6 +70,8 @@ def environment(task, monkeypatch, *, x=.25, q=(1., 0., 0., 0.)):
     class Base:
         def close_env(self):
             self.closed = True
+        def is_left_gripper_open(self): return self.robot.is_left_gripper_open()
+        def is_right_gripper_open(self): return self.robot.is_right_gripper_open()
         def _init_task_env_(self, **kwargs):
             self.info = {'info': {}, 'unchanged': 'keep'}; self.take_action_cnt = 0
             self.robot = SimpleNamespace(left_entity=Entity('left_robot'), right_entity=Entity('right_robot'),
@@ -83,6 +87,11 @@ def environment(task, monkeypatch, *, x=.25, q=(1., 0., 0., 0.)):
             self.model_name = '015_laptop' if task == 'open_laptop' else '036_cabinet'
             self.model_id = 3 if task == 'open_laptop' else 46653
             self.selected_modelname = '073_rubikscube'; self.selected_model_id = np.int64(0)
+            if task == 'place_object_scale':
+                self.selected_modelname = '047_mouse'; self.object.name = self.selected_modelname
+                self.scale = Entity('072_electronicscale'); self.scale_id = np.int64(5)
+                actors[:] = [self.object, self.scale]
+                arts[:] = [self.robot.left_entity, self.robot.right_entity]
     cls, module = load_node(source, task, monkeypatch, Base_Task=Base, ArmTag=arm_type, get_face_prod=face, np=np)
     native = cls(); native.setup_demo(seed=7, now_ep_num=0, is_test=False)
     # Class get_info remains available only to a separate oracle fixture.
@@ -289,7 +298,7 @@ def test_every_actual_factory_initializes_each_fresh_native_instance(monkeypatch
     root = Path(__file__).resolve().parents[2]
     paths = dict(fixedcase=root/'scripts/validate_robotwin_constraint_acceptance.py',
                  search=root/'scripts/search_robotwin_constraint_counterexamples.py',
-                 model=root.parent/'OpenWAM/scripts/robotwin_constraint_policy_candidates.py')
+                 model=OPENWAM/'scripts/robotwin_constraint_policy_candidates.py')
     tree = ast.parse(paths[runner].read_text())
     factory = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'factory')
     calls = []
@@ -343,7 +352,7 @@ def test_search_reference_ingestion_requires_original_initialization_evidence(mo
 
 
 def test_model_collector_rejects_missing_forged_or_wrong_runtime_reference_before_native_work(monkeypatch):
-    path = Path(__file__).resolve().parents[3]/'OpenWAM/scripts/robotwin_constraint_policy_candidates.py'
+    path = OPENWAM/'scripts/robotwin_constraint_policy_candidates.py'
     tree = ast.parse(path.read_text())
     helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'validate_reference_initialization')
     scope = {}; exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), 'exec'), scope)

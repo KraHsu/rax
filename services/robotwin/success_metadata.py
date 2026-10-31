@@ -1,6 +1,6 @@
 """Initialize native success-predicate metadata immediately after fresh setup.
 
-Only two audited task classes are supported. No get_info, expert, motion,
+Only explicitly audited task classes are supported. No get_info, expert, motion,
 predicate, simulator step or global native monkeypatch is invoked. Instruction
 reading remains separate and never assigns these native instance fields.
 """
@@ -21,6 +21,7 @@ ADAPTER_VERSION = 'fresh_scene_success_metadata_v1'
 SOURCE_SHA256 = {
     'open_laptop': 'ec5f6e22b49d8da4e3bf5eacccbda4f147c74715e058cef1e0366e9884c111e9',
     'put_object_cabinet': '4c705f50df805965acad4d09257dc58af1aa3ecc903d3c34d117aa1b155d0b64',
+    'place_object_scale': '37415b6fbda18971a31974d92ceca629a12449d8ed15a2152a91d379b865c450',
 }
 DEPENDENCY_SHA256 = {
     'ArmTag': '7bf69e226b98ae7f5b21a523f722271530885cf4778873900f3564003a9b591d',
@@ -28,6 +29,8 @@ DEPENDENCY_SHA256 = {
 }
 CABINET_OBJECTS = ('047_mouse', '048_stapler', '057_toycar', '073_rubikscube', '075_bread',
                    '077_phone', '081_playingcards', '112_tea-box', '113_coffee-box', '107_soap')
+SCALE_OBJECTS = ('047_mouse', '048_stapler', '050_bell')
+SCALE_IDS = (0, 1, 5, 6)
 MARKER = '_rax_fresh_success_metadata'
 
 
@@ -139,6 +142,27 @@ def validate_metadata_receipt(task, receipt, scene_sha256, *, policy=None):
             raise SuccessMetadataError('Laptop face-product branch differs from native quaternion computation')
         arm = 'left' if face > 0 else 'right'
         expected = {'arm_tag': arm}
+    elif task == 'place_object_scale':
+        try:
+            scale_id = _asset_id(source['scale_model_id'])
+            object_id = _asset_id(source['object_model_id'])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SuccessMetadataError('Invalid scale metadata asset IDs') from exc
+        objects = [row for row in state['actors'] if row['name'] in SCALE_OBJECTS]
+        scales = [row for row in state['actors'] if row['name'] == '072_electronicscale']
+        if (len(objects) != 1 or len(scales) != 1 or identity['name'] != objects[0]['name']
+                or source['object_position'] != entity['p']
+                or source['object_position_dtype'] != entity['position_dtype']
+                or entity['position_dtype'] not in ('float32', 'float64')
+                or not np.isfinite(entity['p']).all()
+                or source.get('scale_scene_entity') != dict(kind='actors', name='072_electronicscale')
+                or scale_id not in SCALE_IDS):
+            raise SuccessMetadataError('Scale metadata does not match unique initial object/scale actors')
+        arm = 'right' if source['object_position'][0] > 0 else 'left'
+        expected = {'arm_tag': arm}
+        if receipt.get('info') != {'{A}': f'072_electronicscale/base{scale_id}',
+                                   '{B}': f'{identity["name"]}/base{object_id}', '{a}': arm}:
+            raise SuccessMetadataError('Scale instruction tokens differ from audited initial metadata')
     else:
         objects = [row for row in state['actors'] if row['name'] in CABINET_OBJECTS]
         if (len(objects) != 1 or identity['name'] != objects[0]['name']
@@ -188,6 +212,28 @@ def _derive(task, native):
                       scene_entity=dict(kind='articulations', name=native.laptop.get_name()),
                       native_branch='left if face_product > 0 else right', model_id=int(native.model_id))
         info = {'{A}': f'015_laptop/base{int(native.model_id)}', '{a}': arm}
+    elif task == 'place_object_scale':
+        if (native.selected_modelname not in SCALE_OBJECTS or native.object.get_name() != native.selected_modelname
+                or native.scale.get_name() != '072_electronicscale'):
+            raise ValueError('Unexpected audited scale/object asset')
+        object_id = _asset_id(native.selected_model_id)
+        scale_id = _asset_id(native.scale_id)
+        if scale_id not in SCALE_IDS:
+            raise ValueError('Unexpected audited scale model ID')
+        position = native.object.get_pose().p
+        if np.asarray(position).shape != (3,) or not np.isfinite(position).all():
+            raise ValueError('Invalid initial scale-object position')
+        # Exact play_once/get_info branch. This field remains tied to the
+        # initial carrier even when the object later crosses the world x=0 plane.
+        arm = 'right' if position[0] > 0 else 'left'
+        values = {'arm_tag': arm_type(arm)}
+        inputs = dict(object_position=np.asarray(position).tolist(), object_position_dtype=str(np.asarray(position).dtype),
+                      scene_entity=dict(kind='actors', name=native.object.get_name()),
+                      scale_scene_entity=dict(kind='actors', name=native.scale.get_name()),
+                      native_branch='right if object_initial_x > 0 else left',
+                      object_model_id=object_id, scale_model_id=scale_id)
+        info = {'{A}': f'072_electronicscale/base{scale_id}',
+                '{B}': f'{native.selected_modelname}/base{object_id}', '{a}': arm}
     else:
         if (native.model_name != '036_cabinet' or native.model_id != 46653
                 or native.selected_modelname not in CABINET_OBJECTS or native.object.get_name() != native.selected_modelname):
