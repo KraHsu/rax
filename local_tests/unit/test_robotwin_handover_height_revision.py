@@ -79,6 +79,22 @@ def test_short_span_predicted_origin_is_not_duplicated_fixed_height():
         audit_reference(h, parent(), reference_id='short-span')
 
 
+def test_rounded_equal_bounds_cannot_hide_a_stricter_removed_interval():
+    a, b = pair(reference())
+    a['reference_frame']['origin_m'][2] = 0.8951440453529358
+    a['parameters']['bounds'] = [0.1297920298576355, 0.1397920298576355]
+    b['reference_frame']['origin_m'][2] = 0.
+    b['parameters']['bounds'] = [1.0249360752105714, 1.0349360752105712]
+    # Original stored pair is redundant even though its exact rational bounds
+    # differ slightly; rounded world-bound equality alone is insufficient.
+    verify_compiled_pair(a, b, 220)
+    for _ in range(5):
+        a['parameters']['bounds'][0] = float(np.nextafter(a['parameters']['bounds'][0], np.inf))
+    assert [v+a['reference_frame']['origin_m'][2] for v in a['parameters']['bounds']] == b['parameters']['bounds']
+    with pytest.raises(HeightRevisionError, match='exact stored-value'):
+        verify_compiled_pair(a, b, 220)
+
+
 @pytest.mark.parametrize('mutation', [
     lambda a, b: a['parameters'].update(anchor='predicted_start'),
     lambda a, b: b['parameters']['bounds'].__setitem__(1, b['parameters']['bounds'][1]+1e-12),

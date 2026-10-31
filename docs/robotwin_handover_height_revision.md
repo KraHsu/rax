@@ -9,14 +9,20 @@ The parent asks for first-closure-to-release vertical displacement. For the
 50 audited training references, that span is 133–142 actions. The existing
 compiler changes its anchor to `reference_frame` because it exceeds the
 32-action horizon. After adding the fixed origin Z to the bounds, it is the
-same world-Z interval as `release_height`, at the same fixed release event.
+same binary64-normalized world-Z interval as `release_height`, at the same
+fixed release event. Exact rational arithmetic on the stored binary64 origins
+and bounds additionally proves that the retained height interval is contained
+in the removed rise interval. In 49 of 50 references the exact bounds differ
+by at most 1.11e-16 metres; the rise interval is wider, so it is redundant in
+the conjunction. Rounded bound equality alone would not prove redundancy.
 It no longer measures a displacement between two generated endpoints.
 
 Use `services.robotwin.handover_mic_height_revision.audit_reference` on each
 complete reference before considering this revision. It rejects other parent
 hashes, short `predicted_start` spans, non-world axes, rotated frames, local
-points, different subjects/events/penalties, or even slightly unequal physical
-bounds. It checks every 32-action window and verifies every retained compiled
+points, different subjects/events/penalties, unequal binary64-normalized
+bounds, or any exact bound that makes the removed interval stricter. It
+checks every 32-action window and verifies every retained compiled
 physical field and automatic motion guard. The event at measured row0 is not a
 generated action. Position validity and the two adjacent reference gripper
 validities remain required. A future reference is not covered merely because
@@ -43,7 +49,7 @@ active, with original numerator N, denominator W, removed weight w and penalty
 P, the new objective is `(N - w*P)/(W - w)`, multiplied by the existing global
 coefficient. Other errors receive different relative weight. A per-kind scale
 override can make the two original penalties different despite their equal
-geometric interval; the retained axis-position override remains in force.
+binary64-normalized interval; the retained axis-position override remains in force.
 Neither identical loss nor unchanged gradient is claimed. Under DDP the removed
 weight leaves the *global* denominator; it must not be normalized separately
 per rank. No objective implementation is changed by this data revision.

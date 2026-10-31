@@ -4,6 +4,7 @@ This produces a candidate only. It neither edits a dataset nor changes registry
 status. The old template remains valid and no general remove-rule API is added.
 """
 from copy import deepcopy
+from fractions import Fraction
 import math
 
 from .constraint_coverage import active_range, chunk_candidate, coverage_report
@@ -46,10 +47,12 @@ def _physics(constraint):
 
 
 def verify_compiled_pair(rise, height, total_frames):
-    """Prove this fixed-reference Z/event pair has the same physical set/masks.
+    """Prove removing this fixed-reference Z/event member preserves conjunction.
 
     This intentionally rejects rotations, local points, other primitives, short
-    predicted-start spans, unequal penalties or even nonidentical float bounds.
+    predicted-start spans, unequal penalties or nonidentical normalized float
+    bounds. Exact stored-value arithmetic must additionally prove that the
+    retained height interval is contained in the removed rise interval.
     It does not decide that arbitrary nearby features are interchangeable.
     """
     if type(total_frames) is not int or total_frames < 2:
@@ -80,7 +83,14 @@ def verify_compiled_pair(rise, height, total_frames):
     bounds = [[v+c['reference_frame']['origin_m'][2] for v in c['parameters']['bounds']]
               for c in (rise, height)]
     if bounds[0] != bounds[1] or bounds[0][0] > bounds[0][1]:
-        raise HeightRevisionError('Absolute world-Z allowed intervals are not exactly equal')
+        raise HeightRevisionError('Binary64-normalized world-Z intervals differ')
+    # Rounded addition may conceal a slightly stricter removed bound. Compare
+    # exact rational representations of the stored binary64 values as well;
+    # equality is unnecessary, but deleting a stricter member is never safe.
+    exact = [[Fraction(float(v)) + Fraction(float(c['reference_frame']['origin_m'][2]))
+              for v in c['parameters']['bounds']] for c in (rise, height)]
+    if not exact[0][0] <= exact[1][0] <= exact[1][1] <= exact[0][1]:
+        raise HeightRevisionError('Retained interval is not contained in removed interval in exact stored-value arithmetic')
     if rise['penalty'] != height['penalty']:
         raise HeightRevisionError('Declared penalty/weight differs; no implicit reweighting claim')
     if active_range(rise) != active_range(height):
