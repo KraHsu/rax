@@ -1,0 +1,161 @@
+"""Observe source-bound expert planner requests without wrapping control methods.
+
+Only already-CPU locals/results on the owner thread are copied. Python return
+may be exception unwind; only a recognized returned status is classified.
+"""
+import hashlib
+import inspect
+from pathlib import Path
+import sys
+import threading
+import time
+
+import numpy as np
+
+from services.robotwin.instruction_metadata import audited_native_source
+
+VERSION = 'readonly_expert_planner_requests_v1'
+TASK = 'put_object_cabinet'
+SOURCE_SHA256 = {
+    TASK: '4c705f50df805965acad4d09257dc58af1aa3ecc903d3c34d117aa1b155d0b64',
+    'base': 'aa9d717ad214b9d68c6eeb83ed03f2491db6addc98deaa988a48a3c074178bdd',
+    'robot': '1f4d0284eaf47fe5de2c0ba98a173b78beb83f2f2cc43409d37072a4774df4c8',
+}
+REQUESTS = ('left_plan_path','right_plan_path','left_plan_multi_path','right_plan_multi_path')
+SCOPES = ('move','left_move_to_pose','right_move_to_pose','together_move_to_pose',
+          'choose_grasp_pose','grasp_actor','place_actor','move_by_displacement','get_place_pose')
+PARAMETERS = ('target_pose','target_lst','constraint_pose','use_point_cloud','use_attach','last_qpos',
+              'now_qpos','trans_target_pose','target_lst_copy','pose','left_target_pose','right_target_pose',
+              'left_constraint_pose','right_constraint_pose')
+
+
+def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def policy():
+    return dict(version=VERSION, task=TASK, source_sha256=SOURCE_SHA256,
+                implementation_sha256=sha(__file__), max_events=2000,
+                scope='Source-bound robot/base/task Python methods on the owner thread; no solver/GPU state reads')
+
+
+def cpu_value(value, depth=0):
+    """No repr(), arbitrary properties, tensor transfer or array coercion."""
+    if depth > 5:return {'observed':False,'reason':'nested_depth_limit'}
+    if value is None or type(value) in (bool,int,str):return value
+    if type(value) is float:
+        return value if np.isfinite(value) else {'observed':False,'reason':'nonfinite'}
+    if isinstance(value,np.generic) and value.dtype.kind in 'biufUS':return cpu_value(value.item(),depth+1)
+    if type(value) is np.ndarray:
+        if value.dtype.kind not in 'biufUS' or value.size>500000:
+            return {'observed':False,'reason':'unsupported_or_large_CPU_array','shape':list(value.shape),'dtype':str(value.dtype)}
+        raw=value.tobytes(order='C')
+        return {'observed':True,'kind':'numpy','shape':list(value.shape),'dtype':str(value.dtype),
+                'sha256':hashlib.sha256(raw).hexdigest(),'values':cpu_value(value.tolist(),depth+1) if value.size<=4096 else None}
+    if type(value) in (tuple,list):
+        if len(value)>4096:return {'observed':False,'reason':'sequence_limit','length':len(value)}
+        return [cpu_value(v,depth+1) for v in value]
+    if type(value) is dict:
+        return {k:cpu_value(v,depth+1) for k,v in value.items() if type(k) is str}
+    return {'observed':False,'reason':'non_CPU_whitelist_type','type':type(value).__name__}
+
+
+def returned_status(value):
+    if type(value) is not dict or 'status' not in value:return None
+    status=value['status']
+    if isinstance(status,np.ndarray):status=status.tolist()
+    if isinstance(status,np.generic):status=status.item()
+    if type(status) is str:return dict(values=[status],all_success=status=='Success')
+    if type(status) in (tuple,list) and status and all(type(x) is str for x in status):
+        return dict(values=list(status),all_success=all(x=='Success'for x in status))
+    return None
+
+
+class ExpertPlannerObserver:
+    def __init__(self,native,*,frozen_policy):
+        if frozen_policy!=policy():raise ValueError('Planner observation policy/source changed')
+        audited_native_source(TASK,native,SOURCE_SHA256)
+        self.native=native;self.policy=frozen_policy;self.events=[];self.errors=[];self.pending={};self.serial=0
+        self.identities={};self.first_non_success=None;self.last_non_success=None;self.first_fatal_scope=None;self.callback_seconds=0.
+        self.thread=threading.get_ident();self.previous=None;self.previous_threading=None;self.started=False;self.used=False
+        for obj,names,source in [(native.robot,REQUESTS,'robot'),(native,SCOPES,'base'),(native,('play_once',),TASK)]:
+            for name in names:
+                fn=getattr(obj,name)
+                if (getattr(fn,'__func__',None) is not getattr(type(obj),name) or fn.__name__!=name
+                        or sha(inspect.getfile(fn))!=SOURCE_SHA256[source]):
+                    raise ValueError('Source-bound planner/control method changed: '+name)
+                self.identities[(fn.__func__.__code__,id(obj))]=(name,source)
+        self.codes={k[0]for k in self.identities}
+
+    def _stack(self,frame):
+        rows=[];parent=frame.f_back
+        while parent is not None and len(rows)<20:
+            if parent.f_code in self.codes:
+                rows.append(dict(function=parent.f_code.co_name,line=parent.f_lineno,filename=parent.f_code.co_filename))
+            parent=parent.f_back
+        return rows
+
+    def _append(self,row):
+        if len(self.events)>=self.policy['max_events']:
+            if 'event_budget_exhausted'not in self.errors:self.errors.append('event_budget_exhausted')
+            return
+        self.events.append(row)
+
+    def profile(self,frame,event,arg):
+        if event not in ('call','return') or frame.f_code not in self.codes:return
+        identity=self.identities.get((frame.f_code,id(frame.f_locals.get('self'))))
+        if identity is None:return
+        started=time.perf_counter()
+        try:
+            if threading.get_ident()!=self.thread:
+                self.errors.append('unexpected_observer_thread');return
+            name,source=identity;key=id(frame);flag=self.native.__dict__.get('plan_success')
+            if event=='call':
+                self.serial+=1
+                row=dict(event='call',call_id=self.serial,method=name,source=source,line=frame.f_lineno,
+                         plan_success=flag if type(flag)is bool else None,stack=self._stack(frame),
+                         arguments={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
+                self.pending[key]=row;self._append(row)
+            else:
+                entry=self.pending.pop(key,None)
+                if entry is None:self.errors.append('return_without_observed_call');return
+                status=returned_status(arg) if name in REQUESTS else None
+                row=dict(event='return_or_unwind',call_id=entry['call_id'],method=name,source=source,line=frame.f_lineno,
+                         plan_success=flag if type(flag)is bool else None,returned_cpu_value=cpu_value(arg),
+                         returned_status=status,parameters_at_return={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
+                self._append(row)
+                if status is not None and not status['all_success']:
+                    self.last_non_success=entry['call_id']
+                    if self.first_non_success is None:self.first_non_success=entry['call_id']
+                if entry['plan_success'] is True and flag is False and self.first_fatal_scope is None:
+                    self.first_fatal_scope=dict(call_id=entry['call_id'],method=name,line=frame.f_lineno,
+                        stack=entry['stack'],last_recognized_non_success_request=self.last_non_success,
+                        meaning='Earliest observed source-bound scope returning with true-to-false plan_success. Not proof the first non-success request caused it.')
+        except Exception as exc:self.errors.append(type(exc).__name__+': '+str(exc))
+        finally:self.callback_seconds+=time.perf_counter()-started
+
+    def start(self):
+        if self.used:raise ValueError('Planner observer is one-shot')
+        self.previous=sys.getprofile();self.previous_threading=threading.getprofile()
+        if self.previous is not None:raise ValueError('Existing profiler must not be replaced')
+        self.initial_other_threads=[t.name for t in threading.enumerate()if t.ident!=self.thread]
+        self.started=True;self.used=True;sys.setprofile(self.profile);return self
+
+    def stop(self):
+        if self.started:
+            current=sys.getprofile()
+            if current!=self.profile:self.errors.append('owner_thread_profile_changed')
+            sys.setprofile(self.previous);self.started=False
+            if threading.getprofile() is not self.previous_threading:self.errors.append('threading_profile_changed')
+        if self.pending:self.errors.append('unmatched_call_scopes')
+
+    def receipt(self):
+        return dict(version=VERSION,policy=self.policy,events=self.events,errors=self.errors,
+            first_non_success_request_id=self.first_non_success,first_true_to_false_scope=self.first_fatal_scope,
+            callback_seconds=self.callback_seconds,initial_other_threads=getattr(self,'initial_other_threads',[]),
+            owner_thread_scope_complete=not self.errors,
+            all_process_or_solver_calls_observed=False,threading_profiler_modified=False,
+            control_methods_wrapped=False,original_arguments_modified=False,extra_state_getters=0,
+            extra_physics_steps=0,extra_get_info_calls=0,extra_predicate_calls=0,
+            timing_limit='callback_seconds excludes dispatch/filter overhead and later JSON serialization; no native A/B equivalence claim',
+            python_return_limit='return_or_unwind includes exception unwinds; None is never classified as a returned planner failure',
+            formal_evidence_eligible=False)
