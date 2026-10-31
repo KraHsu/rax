@@ -16,7 +16,7 @@ from services.robotwin.collection import atomic_json,initial_scene,scene_fingerp
 from services.robotwin.success_metadata import initialize_success_metadata,metadata_policy  # noqa: E402
 from services.robotwin import expert_terminal_evidence as shoes  # noqa: E402
 from services.robotwin import cabinet_terminal_evidence as cabinet  # noqa: E402
-from services.robotwin.expert_planner_observer import ExpertPlannerObserver,policy as planner_policy  # noqa: E402
+from services.robotwin.expert_planner_observer import ExpertPlannerObserver,REQUESTS,returned_status,policy as planner_policy  # noqa: E402
 from services.robotwin.control_timing_observer import file_hash  # noqa: E402
 from scripts import validate_robotwin_constraint_acceptance as legacy  # noqa: E402
 
@@ -148,22 +148,22 @@ def validate_planner_receipt(receipt,frozen):
             or receipt.get('original_arguments_modified')is not False or receipt.get('control_methods_wrapped')is not False
             or receipt.get('all_process_or_solver_calls_observed')is not False
             or any(receipt.get(k)!=0 for k in ('extra_state_getters','extra_physics_steps','extra_get_info_calls','extra_predicate_calls'))):raise ValueError('Invalid planner observation contract')
+    if len(receipt['events'])>frozen['max_events']:raise ValueError('Planner event budget exceeded')
     calls={};returned=set();first=None;fatal=None;last=None
     for row in receipt['events']:
         cid=row['call_id']
         if row['event']=='call':
-            if cid in calls:raise ValueError('Duplicate observed call')
+            if type(cid)is not int or cid!=len(calls)+1:raise ValueError('Nonmonotonic/duplicate observed call')
             calls[cid]=row
         elif row['event']=='return_or_unwind':
             if cid not in calls or cid in returned:raise ValueError('Unpaired/duplicate return')
             returned.add(cid)
             entry=calls[cid];status=row['returned_status']
+            raw_value=row['returned_cpu_value'];raw=raw_value.get('status')if type(raw_value)is dict else None
+            if type(raw)is dict and raw.get('kind')=='numpy':raw=raw.get('values')
+            expected_status=returned_status({'status':raw})if row['method']in REQUESTS else None
+            if status!=expected_status:raise ValueError('Status differs from retained returned CPU value')
             if status is not None:
-                if status['all_success']!=all(x=='Success'for x in status['values']):raise ValueError('Forged status classification')
-                raw=row['returned_cpu_value'].get('status')
-                if isinstance(raw,dict):raw=raw.get('values')
-                values=[raw]if isinstance(raw,str)else raw
-                if values!=status['values']:raise ValueError('Status differs from retained returned CPU value')
                 if not status['all_success']:
                     last=cid
                     if first is None:first=cid

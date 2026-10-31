@@ -147,6 +147,21 @@ def test_exception_unwind_preserves_original_exception_and_is_not_failure_status
     assert obs.receipt()['first_non_success_request_id']is None and not obs.receipt()['errors']
 
 
+@pytest.mark.parametrize('tamper',['hide_failure','call_id','event_budget'])
+def test_planner_verifier_rederives_unfatal_status_and_event_contract(monkeypatch,tamper):
+    from scripts.observe_robotwin_expert_failure import validate_planner_receipt
+    n=planner_native(monkeypatch);n.robot.left_planner=SimpleNamespace(plan_path=lambda *a,**k:{'status':'Failure'})
+    obs=planner.ExpertPlannerObserver(n,frozen_policy=planner.policy()).start()
+    try:n.robot.left_plan_path([0,0,.8,1,0,0,0])
+    finally:obs.stop()
+    r=obs.receipt();assert n.plan_success and r['first_true_to_false_scope']is None
+    validate_planner_receipt(r,planner.policy())
+    if tamper=='hide_failure':r['events'][-1]['returned_status']=None;r['first_non_success_request_id']=None
+    elif tamper=='call_id':r['events'][0]['call_id']=3;r['events'][-1]['call_id']=3;r['first_non_success_request_id']=3
+    else:r['events']*=1001
+    with pytest.raises(ValueError):validate_planner_receipt(r,planner.policy())
+
+
 def test_cpu_serializer_never_touches_unrecognized_device_object():
     class Device:
         def __repr__(self):raise AssertionError('repr')
