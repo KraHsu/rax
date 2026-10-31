@@ -144,7 +144,7 @@ def test_diagnostic_kind_cannot_be_formal_manifest_even_if_renamed():
 def synthetic_complete(output):
     """Fake CPU ledger solely for verifier tests; never native evidence."""
     trace=samples_to_trajectory([pose(),pose(.01)])
-    d.atomic_json(output/'diagnostic_manifest.json',dict(kind=d.KIND,design_sha256='d'*64,
+    d.atomic_json(output/'diagnostic_manifest.json',dict(kind=d.KIND,version=3,expert_terminal_policy=None,design_sha256='d'*64,
                     task='dump_bin_bigbin',seed=10000,**d.FLAGS))
     d.atomic_json(output/'run.json',dict(kind=d.KIND,status='diagnostic_complete',task='dump_bin_bigbin',
                     seed=10000,native_episodes_started=2,**d.FLAGS))

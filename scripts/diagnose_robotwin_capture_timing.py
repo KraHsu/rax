@@ -29,6 +29,7 @@ from services.robotwin.control_timing_observer import (  # noqa: E402
 )
 from services.robotwin.programmatic_annotation import OutsideTemplate, template_hash  # noqa: E402
 from services.robotwin.success_metadata import fresh_physical_state, initialize_success_metadata  # noqa: E402
+from services.robotwin import expert_terminal_evidence as terminal_evidence  # noqa: E402
 from scripts import validate_robotwin_constraint_acceptance as legacy  # noqa: E402
 
 KIND = 'capture_timing_stage_a_dev_only'
@@ -174,7 +175,25 @@ def check_initial(native, reference, physical):
     return current
 
 
-def run_task(output, task, templates, exclusions, source_paths, base_factory):
+def terminal_observer(output, frozen_policy):
+    """Save final physical state even if the optional component audit fails."""
+    def observe(native, attempt):
+        try:
+            state = fresh_physical_state(native)
+            atomic_json(output/'expert_final_physical_state.json', state)
+            audited, receipt = terminal_evidence.observe(native, attempt, frozen_policy=frozen_policy)
+            if state != audited:
+                raise ValueError('Physical state changed between terminal snapshots')
+            atomic_json(output/'expert_terminal_evidence.json', receipt)
+        except Exception as exc:
+            atomic_json(output/'expert_terminal_observation_error.json',
+                dict(error=f'{type(exc).__name__}: {exc}', original_native_success=attempt.get('native_success'),
+                     original_planner_success=attempt.get('planner_success'), **FLAGS))
+            raise
+    return observe
+
+
+def run_task(output, task, templates, exclusions, source_paths, base_factory, *, terminal_policy=None):
     """Injectable only for CPU tests; production factory is fixed below."""
     selection, capture_observers, physical = {}, [], []
     status = dict(task=task, seed=SEED, kind=KIND, status='capturing', native_episodes_started=0, **FLAGS)
@@ -221,7 +240,14 @@ def run_task(output, task, templates, exclusions, source_paths, base_factory):
     legacy.reference_bundle = routed_compiler(templates, original_compile, selection)
     try:
         reference = legacy.capture_reference(capture_factory, templates[0], SEED,
-                        set(exclusions['excluded_training_scene_sha256']), attempt_path=output/'expert_attempt.json')
+                        set(exclusions['excluded_training_scene_sha256']), attempt_path=output/'expert_attempt.json',
+                        **({'terminal_observer':terminal_observer(output,terminal_policy)} if terminal_policy is not None else {}))
+        if terminal_policy is not None:
+            if (output/'expert_terminal_observation_error.json').exists():
+                raise ValueError('Required expert terminal evidence failed; no replay launched')
+            terminal_evidence.validate_receipt(read(output/'expert_terminal_evidence.json'),
+                read(output/'expert_final_physical_state.json'),frozen_policy=terminal_policy,
+                attempt=read(output/'expert_attempt.json'))
         atomic_json(output/'reference.json', reference)
         atomic_json(output/'template_selection.json', selection)
         expert = capture_observers[0].receipt()
@@ -330,12 +356,40 @@ def verify_output(output, expected_design_sha256):
         if file_hash(within(output,name)) != digest:
             raise ValueError('Committed diagnostic evidence changed: '+name)
     manifest, state = read(output/'diagnostic_manifest.json'), read(output/'run.json')
-    if (manifest.get('kind') != KIND or manifest['design_sha256'] != expected_design_sha256
+    if (manifest.get('kind') != KIND or manifest.get('version') != 3 or manifest['design_sha256'] != expected_design_sha256
             or manifest['seed'] != SEED or manifest['task'] not in TASKS
             or state['task'] != manifest['task'] or state['seed'] != SEED
             or state['native_episodes_started'] not in (1,2)
             or any(manifest.get(k) is not v or state.get(k) is not v for k,v in FLAGS.items())):
         raise ValueError('Diagnostic manifest/state identity changed')
+    if manifest.get('version') == 3:
+        frozen_terminal = manifest.get('expert_terminal_policy')
+        expected_terminal = terminal_evidence.policy(manifest['task'])
+        if expected_terminal is None:
+            if frozen_terminal is not None:raise ValueError('Unexpected terminal evidence policy')
+        else:
+            terminal_evidence.validate_policy(manifest['task'], frozen_terminal)
+            attempt = read(output/'expert_attempt.json')
+            if (state['status']=='diagnostic_complete' or 'initial_scene' in attempt
+                    or attempt.get('native_actions_executed') is True or attempt.get('native_success') is not None):
+                if attempt.get('terminal_observer_invoked') is not True:
+                    raise ValueError('Required terminal observer invocation is missing')
+            if attempt.get('terminal_observer_invoked') is True:
+                receipt_path=output/'expert_terminal_evidence.json'
+                error_path=output/'expert_terminal_observation_error.json'
+                if receipt_path.exists() == error_path.exists():
+                    raise ValueError('A captured expert needs exactly one terminal audit or explicit observation error')
+                if receipt_path.exists():
+                    terminal_evidence.validate_receipt(read(receipt_path),read(output/'expert_final_physical_state.json'),
+                        frozen_policy=frozen_terminal,attempt=attempt)
+                    if 'terminal_observation_error' in attempt:
+                        raise ValueError('Terminal audit conflicts with capture observation error')
+                elif (state['status']=='diagnostic_complete'
+                      or read(error_path).get('error') != attempt.get('terminal_observation_error')):
+                    raise ValueError('Terminal observation failure was lost or declared complete')
+            elif any((output/name).exists() for name in ('expert_terminal_evidence.json',
+                    'expert_terminal_observation_error.json','expert_final_physical_state.json')):
+                raise ValueError('Terminal files exist without a recorded observer invocation')
     # Recompute the complete committed journal rather than trusting receipt counters.
     clocks = {}
     for phase in ('expert','replay'):
@@ -389,7 +443,9 @@ def run(args):
         raise ValueError('Explicit execute flag required; default is no launch')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    atomic_json(output/'diagnostic_manifest.json', dict(kind=KIND, version=2, split='dev', task=args.task,
+    terminal_policy = terminal_evidence.policy(args.task)
+    atomic_json(output/'diagnostic_manifest.json', dict(kind=KIND, version=3, split='dev', task=args.task,
+                expert_terminal_policy=terminal_policy,
                 seed=SEED, design=design, design_sha256=file_hash(args.design), created_unix=time.time(), **FLAGS))
     def interrupted(signum, _frame):
         raise InterruptedError(f'Finite diagnostic interrupted by signal {signum}')
@@ -413,7 +469,7 @@ def run(args):
             native.close_env()
             raise
         return native
-    result = run_task(output, args.task, templates, exclusions, sources, factory)
+    result = run_task(output, args.task, templates, exclusions, sources, factory, terminal_policy=terminal_policy)
     commit_index(output)
     verify_output(output,file_hash(args.design))
     print(json.dumps(result, sort_keys=True))

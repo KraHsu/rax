@@ -112,7 +112,7 @@ def reference_bundle(template, trajectory, seed, fingerprint):
     return bundle, audit
 
 
-def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None):
+def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None, terminal_observer=None):
     from scripts.collect_robotwin_clean50 import play_expert
     native = None
     started = time.monotonic()
@@ -157,6 +157,15 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
     finally:
         try:
             if native is not None:
+                if terminal_observer is not None:
+                    attempt['terminal_observer_invoked'] = True
+                    try:
+                        terminal_observer(native, attempt)
+                    except Exception as exc:
+                        # Preserve the original capture/native failure. A
+                        # caller requiring evidence checks this independently;
+                        # observer failures never turn into native success.
+                        attempt['terminal_observation_error'] = f'{type(exc).__name__}: {exc}'
                 native.close_env()
         except BaseException as exc:
             attempt.update(status='failed', cleanup_error=f'{type(exc).__name__}: {exc}')
