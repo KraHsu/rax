@@ -203,6 +203,23 @@ def test_trial_checks_receipt_before_native_or_output_directory(tmp_path):
     assert not (tmp_path/'trials').exists()
 
 
+def test_unexpected_native_capture_error_is_fatal_and_keeps_partial_attempt(tmp_path,monkeypatch):
+    from scripts import collect_robotwin_clean50
+    spec,template,ref=fixture()
+    native=SimpleNamespace(closed=False)
+    native.close_env=lambda:setattr(native,'closed',True)
+    monkeypatch.setattr(driver,'initial_scene',lambda _:ref['initial_scene'])
+    monkeypatch.setattr(driver,'sample',lambda _:{a:{'pose':ref['trajectory'][a]['pose'][0],'gripper':1.} for a in ('left','right')})
+    monkeypatch.setattr(driver,'install_base_frame_adapter',lambda *a,**kw:{'fixture':True})
+    monkeypatch.setattr(collect_robotwin_clean50,'play_expert',lambda _:(_ for _ in ()).throw(RuntimeError('native infrastructure failed')))
+    path=tmp_path/'attempt.json'
+    with pytest.raises(guard.BranchIntegrityError,match='Unexpected native'):
+        driver.capture_reference(lambda _:native,template,spec['seed_start'],set(),attempt_path=path,branch_spec=spec)
+    attempt=json.loads(path.read_text())
+    assert native.closed and len(attempt['samples'])==1 and attempt['native_success'] is None
+    assert attempt['error']=='RuntimeError: native infrastructure failed'
+
+
 def test_final_sealed_reference_recompiles_exactly_and_label_tamper_is_rejected(tmp_path):
     spec,template,ref=fixture()
     ref['bundle'],ref['template_audit']=driver.reference_bundle(template,ref['trajectory'],spec['seed_start'],ref['provenance']['scene_sha256'])

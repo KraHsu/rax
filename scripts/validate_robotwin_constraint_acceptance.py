@@ -27,12 +27,12 @@ from services.robotwin.acceptance_replay import (  # noqa: E402
 )
 from services.robotwin.collection import atomic_json, initial_scene, scene_fingerprint  # noqa: E402
 from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json  # noqa: E402
-from services.robotwin.programmatic_annotation import instantiate, template_hash, validate_template  # noqa: E402
+from services.robotwin.programmatic_annotation import instantiate, template_hash, validate_template, OutsideTemplate  # noqa: E402
 from services.robotwin.success_metadata import (  # noqa: E402
     MARKER, SuccessMetadataError, initialize_success_metadata, metadata_policy, validate_metadata_policy,
 )
 from services.robotwin.reference_branch import (  # noqa: E402
-    BranchIntegrityError, validate_branch_spec, validate_external_sources,
+    BranchIntegrityError, ReferenceBranchMismatch, validate_branch_spec, validate_external_sources,
     policy_fingerprint as branch_policy_fingerprint, reference_admission, seal_reference,
     verify_reference as verify_branch_reference,
 )
@@ -118,7 +118,7 @@ def reference_bundle(template, trajectory, seed, fingerprint):
 
 
 def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=None, branch_spec=None):
-    from scripts.collect_robotwin_clean50 import play_expert
+    from scripts.collect_robotwin_clean50 import play_expert, RejectedEpisode
     native = None
     started = time.monotonic()
     samples = []
@@ -135,6 +135,8 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
         except Exception as exc:
             raise ReplayAdapterError(f'Unsupported replay robot/assets: {exc}') from exc
         if fingerprint in excluded_scenes:
+            if branch_spec is not None:
+                raise ReferenceBranchMismatch('Reference scene duplicates a training/selected scene')
             raise ValueError('Held-out scene duplicates a training scene')
         samples = [sample(native)]
         native._take_picture = lambda *args, **kwargs: samples.append(sample(native))
@@ -144,6 +146,8 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
         attempt['planner_success'] = bool(native.plan_success)
         attempt['native_success'] = bool(native.check_success()) if native.plan_success else None
         if not attempt['planner_success'] or not attempt['native_success']:
+            if branch_spec is not None:
+                raise ReferenceBranchMismatch('Reference native expert did not succeed')
             raise ValueError('Reference native expert did not succeed')
         trajectory = samples_to_trajectory(samples)
         source_hash = json_digest(dict(scene=scene, trajectory=trajectory))
@@ -164,6 +168,10 @@ def capture_reference(factory, template, seed, excluded_scenes, *, attempt_path=
                     capture_seconds=time.monotonic()-started)
     except BaseException as exc:
         attempt.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+        if (branch_spec is not None and isinstance(exc, Exception)
+                and not isinstance(exc, (ReferenceBranchMismatch, RejectedEpisode, OutsideTemplate,
+                                         BranchIntegrityError, ReplayAdapterError, SuccessMetadataError))):
+            raise BranchIntegrityError(f'Unexpected native reference failure: {type(exc).__name__}: {exc}') from exc
         raise
     finally:
         try:
