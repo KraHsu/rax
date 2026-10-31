@@ -1,6 +1,7 @@
 """Opt-in evidence from existing CPU locals at the native scalar planner return.
 
-No solver, control, descriptor, Tensor method or pose getter is invoked here.
+No solver, control, arbitrary user descriptor/property, Tensor method or pose
+getter is invoked here. Audited builtin instance-dictionary descriptors are used.
 """
 
 import hashlib
@@ -8,7 +9,7 @@ import inspect
 import json
 import math
 from pathlib import Path
-from types import GetSetDescriptorType
+from types import FunctionType, GetSetDescriptorType
 
 import numpy as np
 
@@ -169,7 +170,14 @@ def stored(obj, cls):
     """Read the normal instance dictionary only after exact audited type match."""
     if type(obj) is not cls:
         return None
-    descriptor = cls.__dict__.get("__dict__")
+    descriptor = next(
+        (
+            base.__dict__["__dict__"]
+            for base in cls.__mro__
+            if "__dict__" in base.__dict__
+        ),
+        None,
+    )
     if type(descriptor) is not GetSetDescriptorType:
         return None
     value = descriptor.__get__(obj, cls)
@@ -199,23 +207,28 @@ class Bindings:
             cls = type(wrapper)
             _class(cls, "CuroboPlanner", PLANNER_SHA)
             fn = cls.__dict__.get("plan_path")
+            data = stored(wrapper, cls)
             if (
-                getattr(wrapper.plan_path, "__func__", None) is not fn
-                or file_sha(inspect.getfile(fn)) != PLANNER_SHA
+                data is None
+                or "plan_path" in data
+                or type(fn) is not FunctionType
+                or file_sha(fn.__code__.co_filename) != PLANNER_SHA
             ):
                 raise ValueError("Scalar wrapper method replaced")
             globals_ = fn.__globals__
-            data = stored(wrapper, cls)
-            if data is None:
-                raise ValueError("Scalar wrapper has no audited stored configuration")
             mg = data.get("motion_gen")
             mgcls = globals_["MotionGen"]
             _class(mgcls, "MotionGen", MOTION_SHA)
-            if type(mg) is not mgcls or getattr(
-                mg.plan_single, "__func__", None
-            ) is not mgcls.__dict__.get("plan_single"):
+            mgdata = stored(mg, mgcls)
+            mgfn = mgcls.__dict__.get("plan_single")
+            if (
+                mgdata is None
+                or "plan_single" in mgdata
+                or type(mgfn) is not FunctionType
+                or file_sha(mgfn.__code__.co_filename) != MOTION_SHA
+            ):
                 raise ValueError("MotionGen binding replaced")
-            scope = mgcls.plan_single.__globals__
+            scope = mgfn.__globals__
             resultcls = scope["MotionGenResult"]
             enumcls = scope["MotionGenStatus"]
             configcls = globals_["MotionGenPlanConfig"]
@@ -230,9 +243,9 @@ class Bindings:
                 raise ValueError("Audited status enum changed")
             for name, member in members.items():
                 # Enum has an inherited normal dictionary; inspect only this exact audited enum.
-                raw = object.__getattribute__(member, "__dict__")
+                raw = stored(member, enumcls)
                 if (
-                    type(member) is not enumcls
+                    raw is None
                     or raw.get("_name_") != name
                     or raw.get("_value_") != STATUS_MEMBERS[name]
                 ):
@@ -320,7 +333,9 @@ class Bindings:
             if "status" in result:
                 value = result["status"]
                 if type(value) is enumcls:
-                    raw = object.__getattribute__(value, "__dict__")
+                    raw = stored(value, enumcls)
+                    if raw is None:
+                        raw = {}
                     name = raw.get("_name_")
                     text = raw.get("_value_")
                     if (

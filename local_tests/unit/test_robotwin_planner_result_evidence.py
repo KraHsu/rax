@@ -31,8 +31,6 @@ def source_classes(path, names, monkeypatch, **scope):
         node = next(
             n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == name
         )
-        if name == "MotionGen":
-            node.bases = []
         if methods is not None:
             # Keep exact data fields and selected unmodified methods. Never execute imports or constructors of MotionGen/CuroboPlanner.
             node.body = [
@@ -97,6 +95,7 @@ def environment(monkeypatch, tmp_path, *, status="TRAJOPT_FAIL", success=False):
     mg = source_classes(
         FIX / "motion_gen.py",
         {
+            "MotionGenConfig": set(),
             "MotionGenPlanConfig": {"__post_init__"},
             "MotionGenStatus": None,
             "MotionGenResult": set(),
@@ -147,7 +146,7 @@ def environment(monkeypatch, tmp_path, *, status="TRAJOPT_FAIL", success=False):
         w.all_joints = ["a", "b"]
         w.frame_bias = [0.01, 0.02, 0.03]
         w.yml_path = str(config)
-        m = mg.MotionGen()
+        m = mg.MotionGen.__new__(mg.MotionGen)
         m.reset = lambda **k: calls.append(("original.reset", k))
         m._get_solve_state = lambda *a: 1
 
@@ -539,3 +538,22 @@ def test_event_budget_incomplete_and_profile_cleanup(monkeypatch, tmp_path):
     assert (
         sys.getprofile() is previous and not o.receipt()["owner_thread_scope_complete"]
     )
+
+
+@pytest.mark.parametrize("target", ["wrapper", "motion", "enum_member"])
+def test_unknown_method_override_is_rejected_without_attribute_access(
+    monkeypatch, tmp_path, target
+):
+    n, _, _, mg = environment(monkeypatch, tmp_path)
+    if target == "wrapper":
+        n.robot.right_planner.plan_path = Dangerous()
+    elif target == "motion":
+        n.robot.right_planner.motion_gen.plan_single = Dangerous()
+    else:
+        mg.MotionGenStatus._member_map_["IK_FAIL"] = Dangerous()
+    before = sys.getprofile()
+    with pytest.raises(ValueError):
+        planner.ExpertPlannerObserver(
+            n, frozen_policy=planner.policy(solver_details=True)
+        )
+    assert sys.getprofile() is before
