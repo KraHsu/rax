@@ -35,6 +35,35 @@ def within(root,relative):
     return p
 
 
+TARGETED_VERSION='cabinet_scalar_result_v3_one_shot_v1'
+
+
+def validate_targeted_history(root,design,history):
+    """The new finite observation counts both immutable failed initializations."""
+    if (design.get('targeted_observation_version')!=TARGETED_VERSION or design.get('task')!='put_object_cabinet'
+            or design.get('planner_solver_details')is not True):raise ValueError('Targeted scalar observation requires explicit v3 opt-in')
+    expected=dict(previous_cabinet_initializations=2,new_cabinet_initializations_max=1,cumulative_cabinet_initializations_max=3)
+    if any(type(history.get(k))is not int or history[k]!=v for k,v in expected.items()):raise ValueError('Targeted cabinet history must be 2 plus 1, maximum 3')
+    sources=history.get('sources')
+    if type(sources)is not list or len(sources)!=2:raise ValueError('Both original failed initializations required')
+    suffixes=('fresh_metadata_native_smoke_v1/runs/put_object_cabinet/reference_attempts/seed10050.json',
+              'cabinet_expert_observation_v1/runs/put_object_cabinet/expert_attempt.json')
+    hashes=[]
+    for index,(entry,suffix)in enumerate(zip(sources,suffixes),1):
+        if (set(entry)!={'ordinal','source_path','input_file','sha256'}or entry['ordinal']!=index
+                or not Path(entry['source_path']).is_absolute()or not entry['source_path'].endswith('/'+suffix)
+                or design['external_files'].get(entry['source_path'])!=entry['sha256']
+                or design['input_files'].get(entry['input_file'])!=entry['sha256']):raise ValueError('Historical source closure changed')
+        path=within(root,entry['input_file'])
+        if file_hash(path)!=entry['sha256']:raise ValueError('Historical original bytes changed')
+        original=read(path)
+        if (original.get('task')!='put_object_cabinet'or original.get('seed')!=10050
+                or original.get('scene_sha256')!=TASKS['put_object_cabinet']['scene']or original.get('status')!='failed'
+                or original.get('planner_success')is not False or original.get('native_success')is not None):raise ValueError('Original failed planner/native labels changed')
+        hashes.append(entry['sha256'])
+    if len(set(hashes))!=2 or design['previous_failure']!=sources[-1]['input_file']:raise ValueError('Latest failure or distinct initialization evidence missing')
+
+
 def validate_design(root,design):
     task=design.get('task')
     if (design.get('version')!=1 or design.get('kind')!=KIND or task not in TASKS
@@ -66,7 +95,9 @@ def validate_design(root,design):
     prior=read(within(root,design['previous_failure']))
     if prior['seed']!=design['seed']or prior['scene_sha256']!=design['expected_scene_sha256']or prior['status']!='failed' or prior.get('planner_success')is not(task=='place_dual_shoes') or prior.get('native_success')is not(False if task=='place_dual_shoes'else None):raise ValueError('Original failed attempt must be retained')
     history=read(within(root,design['initialization_history']))
-    if task=='place_dual_shoes':
+    if design.get('targeted_observation_version')is not None:
+        validate_targeted_history(root,design,history)
+    elif task=='place_dual_shoes':
         if (history['previous_stagea_initializations']!=5 or history['new_stagea_initializations_max']!=1 or history['cumulative_stagea_initializations_max']!=6):raise ValueError('StageA history budget changed')
     elif history['previous_cabinet_smoke_initializations']!=1 or history['new_cabinet_initializations_max']!=1 or history['cumulative_cabinet_initializations_max']!=2:
         raise ValueError('Cabinet failure-observation budget changed')
