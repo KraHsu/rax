@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json, validate_constraint, validate_bundle, validate_reference_events
+from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json, validate_constraint, validate_bundle, validate_reference_events, validate_reference_center_hints
 
 
 class EpisodeRecorder:
@@ -108,6 +108,7 @@ class EpisodeRecorder:
         try:
             validate_bundle(self.bundle, self.length)
             validate_reference_events(self.bundle, self.handle)
+            validate_reference_center_hints(self.bundle, self.handle)
             self.bundle['provenance']['native_success'] = bool(success)
             if success:
                 import h5py

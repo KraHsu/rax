@@ -12,7 +12,7 @@ import re
 import numpy as np
 
 from services.robotwin.annotation import constraint_positions, reference_values, rotation, validate_reference_bounds
-from services.robotwin.constraint_schema import KINDS, LOCAL_POINT_KINDS, SCHEMA_VERSION, keys, read_embedded, validate_bundle, validate_local_point, vector
+from services.robotwin.constraint_schema import KINDS, LOCAL_POINT_KINDS, SCHEMA_VERSION, keys, make_center_tangent_hint, read_embedded, validate_bundle, validate_local_point, vector
 from services.robotwin.full_trajectory import PREFIX, LEGACY_PREFIX, MOTION_EXEMPT_TYPES, complete_constraints, validate_coverage_policy, validate_motion_coverage
 from services.robotwin.reference_motion_phase import POLICY as PHASE_POLICY, InvalidReferenceMotionPhase, select_reference_motion_phase, reference_segment_axis
 
@@ -146,7 +146,10 @@ def validate_template(t):
     ids = set()
     for r in t['rules']:
         keys(r, ('id', 'type', 'subjects', 'selector', 'origin', 'orientation', 'parameters', 'rationale'),
-             ('start_anchor', 'required', 'allowed_margin', 'reference_phase'))
+             ('start_anchor', 'required', 'allowed_margin', 'reference_phase', 'angle_center_hint'))
+        if 'angle_center_hint' in r and (r['type'] != 'axis_angle_interval'
+                or r['angle_center_hint'] != 'selection_start_reference_projection_v1'):
+            raise ValueError('angle_center_hint requires the explicit fixed reference projection on an axis angle')
         if not isinstance(r['id'], str) or not r['id'] or r['id'] in ids or r['id'].startswith((PREFIX, LEGACY_PREFIX)):
             raise ValueError('Rule IDs must be unique nonempty strings')
         ids.add(r['id'])
@@ -440,6 +443,11 @@ def instantiate(handle, template):
                 if kind in ('gripper_interval', 'gripper_pair_max_interval'): upper = min(1., upper)
                 if kind in ('axis_angle_interval', 'angular_displacement_interval'): upper = min(math.pi, upper)
                 c['parameters']['bounds'] = [lower, upper]
+                if 'angle_center_hint' in rule:
+                    c['parameters']['center_tangent_hint'] = make_center_tangent_hint(
+                        c, arm['pose'][lo, 3:].tolist(), bundle['provenance']['recording_id'], lo)
+                    c['evidence']['rationale'] += (' Fixed reference tangent for an opt-in exact-center limiting-gradient '
+                        'selection only; does not alter the allowed set, activation, penalty or certify native success.')
                 constraints.append(c)
         if selected_count == 0 and rule.get('required', True): raise OutsideTemplate(f'Missing selection for {rule["id"]}')
     if removed:

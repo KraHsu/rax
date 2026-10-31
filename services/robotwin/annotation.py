@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 from PIL import Image
 
-from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json, read_embedded, validate_bundle, validate_reference_events
+from services.robotwin.constraint_schema import HDF5_KEY, SCHEMA_VERSION, canonical_json, read_embedded, validate_bundle, validate_reference_events, validate_reference_center_hints
 
 
 def digest(path):
@@ -119,6 +119,7 @@ def window_direction_values(pose, constraint, indices):
 
 def validate_reference_bounds(bundle, handle):
     """Accepted labels in this initial workflow must admit the source demonstration."""
+    validate_reference_center_hints(bundle, handle)
     report = []
     for c in bundle['constraints']:
         if c['evidence']['status'] != 'accepted':
