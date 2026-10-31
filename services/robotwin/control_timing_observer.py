@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+import tokenize
 
 import numpy as np
 
@@ -64,7 +65,10 @@ def source_scope(paths, *, observed_timestep_setter=None, observed_timestep_sett
     setters = tuple(observed_timestep_setters)+((observed_timestep_setter,) if observed_timestep_setter is not None else ())
     files, findings = {}, []
     for path in sorted({str(Path(p).resolve()) for p in paths}):
-        source = Path(path).read_text()
+        # Python source uses PEP 263/UTF-8, independent of a native library's
+        # process locale. Native initialization may leave LC_CTYPE at C.
+        with tokenize.open(path) as stream:
+            source = stream.read()
         files[path] = file_hash(path)
         tree = ast.parse(source, filename=path)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
@@ -285,7 +289,7 @@ class ControlTimingObserver:
         if self.previous_profile is not None or self.previous_thread_profile is not None:
             raise RuntimeError('Existing profiler must not be replaced')
         if self.journal_path is not None:
-            self.journal = self.journal_path.open('x')
+            self.journal = self.journal_path.open('x', encoding='utf-8')
         observer = self
         def transparent_step(target, *args, **kwargs):
             return observer._backend_call(target, *args, **kwargs)

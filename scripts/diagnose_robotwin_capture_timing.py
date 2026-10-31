@@ -7,11 +7,13 @@ The separate diagnostic manifest is deliberately not an acceptance manifest.
 import argparse
 import importlib
 import json
+import locale
 from pathlib import Path
 import random
 import signal
 import sys
 import time
+import traceback
 
 import numpy as np
 
@@ -38,7 +40,7 @@ SOURCE_BASE = 'a2a4b356cac3ffe620389876b53652250bcd9635'
 
 
 def read(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def within(root, relative):
@@ -180,13 +182,21 @@ def run_task(output, task, templates, exclusions, source_paths, base_factory):
 
     def capture_factory(seed):
         status['native_episodes_started'] += 1
+        status['capture_phase'] = 'native_fresh_setup_started'
         atomic_json(output/'run.json', status)
         native = base_factory(seed)
         observer = None
         try:
+            status['capture_phase'] = 'native_fresh_setup_complete_before_observer'
+            atomic_json(output/'run.json', status)
+            atomic_json(output/'post_setup_encoding.json', dict(
+                lc_ctype=locale.setlocale(locale.LC_CTYPE), preferred_encoding=locale.getpreferredencoding(False),
+                python_utf8_mode=sys.flags.utf8_mode, source_decoding='PEP263_or_UTF8_explicit', json_encoding='UTF8_explicit'))
             initial = fresh_physical_state(native)
             physical.append(initial)
             atomic_json(output/'expert_initial_physical_state.json', initial)
+            status['capture_phase'] = 'observer_construction_before_first_capture_sample'
+            atomic_json(output/'run.json', status)
             observer = ControlTimingObserver(native, sample, phase='expert_capture', source_paths=source_paths,
                                              journal_path=output/'expert_events.jsonl')
             capture_observers.append(observer)
@@ -198,6 +208,8 @@ def run_task(output, task, templates, exclusions, source_paths, base_factory):
                 return original_close()
             native.close_env = close
             observer.start()
+            status['capture_phase'] = 'observer_started_before_capture_samples_and_expert'
+            atomic_json(output/'run.json', status)
             return native
         except BaseException:
             if observer is not None:
@@ -216,7 +228,7 @@ def run_task(output, task, templates, exclusions, source_paths, base_factory):
         if not expert['timing_compatibility_ready']:
             raise ValueError('Expert observation scope/control arguments incomplete; no baseline launched')
     except BaseException as exc:
-        status.update(status='blocked_capture', error=f'{type(exc).__name__}: {exc}')
+        status.update(status='blocked_capture', error=f'{type(exc).__name__}: {exc}', error_traceback=traceback.format_exc())
         atomic_json(output/'template_selection.json', selection)
         atomic_json(output/'run.json', status)
         return status
@@ -256,7 +268,7 @@ def run_task(output, task, templates, exclusions, source_paths, base_factory):
                             else 'blocked_baseline')
     except BaseException as exc:
         raw.update(error=f'{type(exc).__name__}: {exc}')
-        status.update(status='blocked_baseline', error=raw['error'])
+        status.update(status='blocked_baseline', error=raw['error'], error_traceback=traceback.format_exc())
     finally:
         if observer is not None:
             observer.stop()
@@ -331,7 +343,7 @@ def verify_output(output, expected_design_sha256):
         if not receipt.exists():
             continue
         clocks[phase] = value = read(receipt)
-        events = [json.loads(line) for line in (output/(phase+'_events.jsonl')).read_text().splitlines()]
+        events = [json.loads(line) for line in (output/(phase+'_events.jsonl')).read_text(encoding='utf-8').splitlines()]
         completed = [e for e in events if e['kind']=='backend_complete']
         if (value['events_sha256'] != json_hash(events) or value['event_count'] != len(events)
                 or [e['sequence'] for e in events] != list(range(len(events)))
