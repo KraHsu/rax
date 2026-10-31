@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task": "handover_mic",
+  "rationale": "Retain measured closure locations, fully closed command intervals, post-closure open command intervals, and the releasing arm's closure-to-release vertical rise with a local release-height constraint. These describe the observed two-arm handover using reference envelopes, not object contact or physical feasibility. Select arms symmetrically. Recipient-only terminal height is omitted because the selector language cannot select an arm by its event history. No orientation or speed requirement is inferred.",
+  "signatures": [
+    [
+      "close",
+      "close,open"
+    ]
+  ],
+  "rules": [
+    {
+      "id": "closure_location",
+      "type": "point_distance_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "decreasing",
+        "occurrence": "all"
+      },
+      "origin": "selection_start",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Preserve each EEF's measured location at its own closure crossing, for initial pickup and reception. The fixed measured origin is not an object-frame grasp center or a calibrated grasp region."
+    },
+    {
+      "id": "closed_command",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "closed",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Retain fully closed reference command plateaus after acquisition and reception. Gripper fraction does not measure contact, force, aperture in metres, or successful retention."
+    },
+    {
+      "id": "released_command",
+      "type": "gripper_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "gripper_plateaus",
+        "state": "open",
+        "after": "first_close"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {},
+      "rationale": "Retain the releasing arm's fully open command plateau after its prior closure. Initial approach with an open gripper is outside this selection."
+    },
+    {
+      "id": "release_vertical_rise",
+      "type": "axis_displacement_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "increasing",
+        "occurrence": "all"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "start_anchor": "first_close",
+      "rationale": "Measure the releasing EEF's net world-vertical rise from its own first closure to its release crossing. This is an end-of-carry displacement, not object lift or an intermediate path restriction; training requires the original closure anchor inside the chunk."
+    },
+    {
+      "id": "release_height",
+      "type": "axis_position_interval",
+      "subjects": "active_arms",
+      "selector": {
+        "kind": "events",
+        "direction": "increasing",
+        "occurrence": "all"
+      },
+      "origin": "world",
+      "orientation": "world",
+      "parameters": {
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "rationale": "Retain the releasing EEF's measured world height at the release crossing as local elevated-handover geometry when the earlier displacement anchor is outside a training chunk. This is not table clearance or object support geometry."
+    }
+  ]
+}
