@@ -1,0 +1,8 @@
+{
+  "kind": "original_installed_source_CPU_AST_fixture",
+  "files": {
+    "motion_gen.py": "348ee2fa858b1d651a70fa2b2b5a5d4e240ea724b7817d7769473c3f7a7e46e8",
+    "planner.py": "178a72a7b6ededee66e7f78ebc35e7c39c4a855a1d713b90a01a32868d49f24a"
+  },
+  "fixture_scope": "Tests execute original scalar wrapper/method and dataclass stored field definitions with CPU stubs, never actual CUDA/solver module imports."
+}

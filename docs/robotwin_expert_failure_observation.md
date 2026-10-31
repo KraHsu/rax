@@ -21,3 +21,60 @@ Version2 permits object arrays only in a source-bound request's `status` field: 
 The observer and offline verifier derive status through the same retained-value decoder. Malformed, mixed, missing or oversized status values produce an explicit observation error and incomplete scope, rather than success or an absent failure. A true Python `None` return remains ambiguous between return and exception unwind. Content/shape/hash tampering and dropped derived failure labels are rejected. The policy version, codec limits and implementation fingerprint change, so old manifests cannot silently adopt this revision.
 
 The native regression fixture is a compressed byte-exact copy of the 92-event failed profile. It must continue to expose the five irrecoverable raw-status gaps. Synthetic array tests validate future recording only; they never substitute values into the historical events. This fix neither resolves the cabinet's physical planning failure nor authorizes another native episode.
+
+### Opt-in scalar cuRobo return evidence (future-only)
+
+`planner_policy(solver_details=True)` selects observer v3 and includes the new
+`planner_result_evidence.py` implementation hash, the exact native `planner.py`
+SHA and the installed `motion_gen.py` SHA. The default remains v2. A future
+finite design must explicitly declare `planner_solver_details: true`, include
+the helper in its frozen code and the actual cuRobo source in its external
+inputs. This source change is not an execution authorization and supplies no
+new owner, retry, seed substitution, or episode budget.
+
+The existing current-thread profile observes the scalar CuroboPlanner return
+inside its matching active left/right Robot request. It copies only existing
+CPU locals: world base/target poses (native wxyz), transformed/biased base goal,
+current qpos, source joint indices and five-decimal rounded angles, optional
+constraint vector, and the original `c_time`. Offline verification reconstructs
+the joint-name mapping and rounding. It does not assert that these coordinates
+alone prove collision clearance or feasibility.
+
+Before profiling, exact source-bound runtime types and methods are checked.
+The normal instance dictionary of the exact audited MotionGenResult is read for
+`status` and `attempts` only. Status permits the exact audited MotionGenStatus
+enum (stored name/value with a fixed mapping), exact bounded Python str, or
+explicit None. Unknown/subclass/device/property values are unsupported and
+make the evidence incomplete; they do not become a failure or success. No
+extra `.item()`, `.cpu()`, `.to()`, `.numpy()`, tensor repr, pose getter, solver,
+control call, or physics step is made. The native source's own existing device
+operations still execute unchanged. Existing plain plan-config fields and
+wrapper joint/frame fields are recorded separately. The YAML content/hash is
+the file at the runtime `yml_path` **at observation start**, not proof that an
+unobserved runtime world/config was reconstructed from that file.
+
+A returned enum is a solver-reported category, not a proof of the underlying
+physical cause. This installed enum has no TIMEOUT member. A 10-second timeout
+configuration or elapsed time above 10 seconds does not establish timeout as
+the exit reason. `max_attempts=10` is a configuration ceiling; actual attempts
+come only from the separately retained result field. None/string categories
+remain exactly as observed. Batch planning is still covered by the bounded v2
+status codec; this extension does not invent batch solver detail.
+
+Adding scalar wrapper events changes global call IDs. IDs associate evidence
+within one receipt only. Historical call 46 remains the old raw scalar Fail;
+future comparison must use arm, enclosing native scope, Robot request order,
+and target/joint evidence, not demand the same numeric call ID. The five old
+object-status arrays remain permanently absent, and all old index/profile bytes
+and the failed whole-observation verdict stay unchanged.
+
+The profile and file reads have wall-time/CPU overhead. CPU source-AST probes
+verify argument/return identity and unchanged control/device call sequences;
+they do not prove GPU scheduling or native episode reproducibility. The frozen
+old 92-event fixture is only a refusal/preservation regression. Synthetic
+solver result types used in CPU probes are never backfilled into that fixture.
+
+The audited wrapper builds a planning world containing a hard-coded table
+cuboid (native `planner.py:338–356`). A future `WORLD_COLLISION` category is a
+report about that planner's configured world/model. It cannot by itself prove
+contact with the physical cabinet, which is not established by this evidence.

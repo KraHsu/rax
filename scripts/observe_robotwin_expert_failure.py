@@ -78,7 +78,12 @@ def validate_design(root,design):
     terminal_policy=shoes.policy(task)if task=='place_dual_shoes'else cabinet.policy(within(root,design['cabinet_asset_metadata']))
     if terminal_policy!=design['terminal_policy']or metadata_policy(task)!=design['success_metadata_policy']:
         raise ValueError('Frozen terminal/fresh metadata policy changed')
-    if design['planner_policy']!=(planner_policy()if task=='put_object_cabinet'else None):raise ValueError('Planner observation policy changed')
+    optin=design.get('planner_solver_details',False)
+    if type(optin)is not bool or(optin and task!='put_object_cabinet'):raise ValueError('Invalid solver evidence opt-in')
+    if optin:
+        from services.robotwin.planner_result_evidence import MOTION_SHA
+        if 'services/robotwin/planner_result_evidence.py'not in design['rax_files']or MOTION_SHA not in design['external_files'].values():raise ValueError('Solver evidence source closure omitted')
+    if design['planner_policy']!=(planner_policy(solver_details=optin)if task=='put_object_cabinet'else None):raise ValueError('Planner observation policy changed')
     return template,excluded
 
 
@@ -144,22 +149,37 @@ def run_one(output,design,template,excluded,base_factory):
 
 
 def validate_planner_receipt(receipt,frozen):
-    if frozen!=planner_policy():raise ValueError('Planner observation policy/source changed; legacy missing values cannot be upgraded')
+    if frozen!=planner_policy(solver_details='solver_details'in frozen):raise ValueError('Planner observation policy/source changed; legacy missing values cannot be upgraded')
     if (receipt.get('version')!=frozen['version']or receipt.get('policy')!=frozen or receipt.get('formal_evidence_eligible')is not False
             or receipt.get('original_arguments_modified')is not False or receipt.get('control_methods_wrapped')is not False
             or receipt.get('all_process_or_solver_calls_observed')is not False
             or any(receipt.get(k)!=0 for k in ('extra_state_getters','extra_physics_steps','extra_get_info_calls','extra_predicate_calls'))):raise ValueError('Invalid planner observation contract')
     if len(receipt['events'])>frozen['max_events']:raise ValueError('Planner event budget exceeded')
-    calls={};returned=set();first=None;fatal=None;last=None
+    calls={};returned=set();first=None;fatal=None;last=None;solver_returns=0
+    solver='solver_details'in frozen
+    if solver:
+        from services.robotwin.planner_result_evidence import validate_evidence,validate_context
+        contexts=receipt.get('solver_contexts')
+        if type(contexts)is not dict or set(contexts)!={'left','right'}:raise ValueError('Solver contexts omitted')
+        for arm in contexts:validate_context(contexts[arm],arm)
+    elif 'solver_contexts'in receipt:raise ValueError('Solver context requires explicit opt-in')
     for row in receipt['events']:
         cid=row['call_id']
         if row['event']=='call':
             if type(cid)is not int or cid!=len(calls)+1:raise ValueError('Nonmonotonic/duplicate observed call')
+            if row['source']=='curobo_wrapper':
+                parent=row.get('parent_request_call_id');arm=row.get('arm')
+                if not solver or arm not in ('left','right')or parent not in calls or parent in returned or calls[parent]['method']!=arm+'_plan_path':raise ValueError('Solver call lacks active matching Robot request')
             calls[cid]=row
         elif row['event']=='return_or_unwind':
             if cid not in calls or cid in returned:raise ValueError('Unpaired/duplicate return')
             returned.add(cid)
             entry=calls[cid];status=row['returned_status']
+            if row['source']=='curobo_wrapper':
+                solver_returns+=1
+                complete=validate_evidence(row['solver_evidence'],contexts[entry['arm']],call_id=cid,parent_request_call_id=entry['parent_request_call_id'],arm=entry['arm'])
+                if not complete and 'incomplete_solver_evidence:'+str(cid)not in receipt['errors']:raise ValueError('Missing solver evidence cannot claim complete')
+            elif 'solver_evidence'in row:raise ValueError('Solver evidence on unrelated return')
             expected_status,error=retained_status(row['returned_cpu_value'])if row['method']in REQUESTS else(None,None)
             if status!=expected_status:raise ValueError('Status differs from retained returned CPU value')
             if row.get('status_observation_error')!=error:raise ValueError('Status observation error differs from retained evidence')
@@ -176,6 +196,9 @@ def validate_planner_receipt(receipt,frozen):
                 if declared is None or declared['last_recognized_non_success_request']!=last or declared['method']!=row['method']:raise ValueError('Fatal scope attribution changed')
         else:raise ValueError('Unknown observation event')
     if first!=receipt['first_non_success_request_id']or fatal!=(None if receipt['first_true_to_false_scope']is None else receipt['first_true_to_false_scope']['call_id']):raise ValueError('First-failure classification changed')
+    if solver and receipt['owner_thread_scope_complete']:
+        scalar=sum(c['method']in ('left_plan_path','right_plan_path')for c in calls.values())
+        if solver_returns!=scalar:raise ValueError('Scalar solver evidence omitted')
     if receipt['owner_thread_scope_complete']and returned!=set(calls):raise ValueError('Complete receipt has unfinished observed calls')
     if receipt['owner_thread_scope_complete']is not(not receipt['errors']):raise ValueError('Planner completeness differs from raw errors')
 

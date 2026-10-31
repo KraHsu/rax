@@ -36,13 +36,19 @@ PARAMETERS = ('target_pose','target_lst','constraint_pose','use_point_cloud','us
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def policy():
-    return dict(version=VERSION, task=TASK, source_sha256=SOURCE_SHA256,
+def policy(*,solver_details=False):
+    if type(solver_details)is not bool:raise ValueError('Explicit boolean solver-details opt-in required')
+    result=dict(version=VERSION, task=TASK, source_sha256=SOURCE_SHA256,
                 implementation_sha256=sha(__file__), max_events=2000,
                 status_codec=dict(version=STATUS_CODEC,max_items=MAX_STATUS_ITEMS,
                                   max_string_codepoints=MAX_STATUS_STRING_LENGTH,
                                   object_array='exact ndarray, one dimensional, nonempty, exact Python str elements'),
                 scope='Source-bound robot/base/task Python methods on the owner thread; no solver/GPU state reads')
+    if solver_details:
+        from services.robotwin.planner_result_evidence import policy as result_policy
+        result.update(version='readonly_expert_planner_requests_v3',solver_details=result_policy(),
+                      scope='Source-bound owner-thread Robot/base/task and scalar cuRobo wrapper returns; audited existing CPU locals only, no Tensor reads')
+    return result
 
 
 def cpu_value(value, depth=0):
@@ -147,7 +153,7 @@ def retained_status(value):
 
 class ExpertPlannerObserver:
     def __init__(self,native,*,frozen_policy):
-        if frozen_policy!=policy():raise ValueError('Planner observation policy/source changed')
+        if frozen_policy!=policy(solver_details='solver_details'in frozen_policy):raise ValueError('Planner observation policy/source changed')
         audited_native_source(TASK,native,SOURCE_SHA256)
         self.native=native;self.policy=frozen_policy;self.events=[];self.errors=[];self.pending={};self.serial=0
         self.identities={};self.first_non_success=None;self.last_non_success=None;self.first_fatal_scope=None;self.callback_seconds=0.
@@ -159,6 +165,12 @@ class ExpertPlannerObserver:
                         or sha(inspect.getfile(fn))!=SOURCE_SHA256[source]):
                     raise ValueError('Source-bound planner/control method changed: '+name)
                 self.identities[(fn.__func__.__code__,id(obj))]=(name,source)
+        self.solver=None
+        if 'solver_details'in frozen_policy:
+            from services.robotwin.planner_result_evidence import Bindings
+            self.solver=Bindings(native)
+            for obj,fn,arm in self.solver.methods:
+                self.identities[(fn.__code__,id(obj))]=('plan_path','curobo_wrapper')
         self.codes={k[0]for k in self.identities}
 
     def _stack(self,frame):
@@ -189,16 +201,30 @@ class ExpertPlannerObserver:
                 row=dict(event='call',call_id=self.serial,method=name,source=source,line=frame.f_lineno,
                          plan_success=flag if type(flag)is bool else None,stack=self._stack(frame),
                          arguments={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
+                if source=='curobo_wrapper':
+                    parent=frame.f_back
+                    while parent is not None:
+                        p=self.pending.get(id(parent))
+                        if p is not None and p['method']in REQUESTS:break
+                        parent=parent.f_back
+                    row['parent_request_call_id']=None if parent is None else p['call_id']
+                    row['arm']=self.solver.by_object[id(frame.f_locals['self'])][0]
                 self.pending[key]=row;self._append(row)
             else:
                 entry=self.pending.pop(key,None)
                 if entry is None:self.errors.append('return_without_observed_call');return
-                retained=encode_request_return(arg)if name in REQUESTS else cpu_value(arg)
+                if source=='curobo_wrapper'and type(arg)is dict:
+                    retained={'status':cpu_value(arg['status'])}if 'status'in arg else None
+                else:retained=encode_request_return(arg)if name in REQUESTS else cpu_value(arg)
                 status,error=retained_status(retained)if name in REQUESTS else(None,None)
                 row=dict(event='return_or_unwind',call_id=entry['call_id'],method=name,source=source,line=frame.f_lineno,
                          plan_success=flag if type(flag)is bool else None,returned_cpu_value=retained,
                          returned_status=status,status_observation_error=error,
                          parameters_at_return={k:cpu_value(frame.f_locals[k])for k in PARAMETERS if k in frame.f_locals})
+                if source=='curobo_wrapper':
+                    evidence=self.solver.collect(frame.f_locals['self'],frame.f_locals,entry['call_id'],entry['parent_request_call_id'])
+                    row['solver_evidence']=evidence
+                    if not evidence['complete']or entry['parent_request_call_id']is None:self.errors.append('incomplete_solver_evidence:'+str(entry['call_id']))
                 self._append(row)
                 if error is not None:self.errors.append('unobserved_status:'+str(entry['call_id'])+':'+error)
                 if status is not None and not status['all_success']:
@@ -227,7 +253,7 @@ class ExpertPlannerObserver:
         if self.pending:self.errors.append('unmatched_call_scopes')
 
     def receipt(self):
-        return dict(version=VERSION,policy=self.policy,events=self.events,errors=self.errors,
+        result=dict(version=self.policy['version'],policy=self.policy,events=self.events,errors=self.errors,
             first_non_success_request_id=self.first_non_success,first_true_to_false_scope=self.first_fatal_scope,
             callback_seconds=self.callback_seconds,initial_other_threads=getattr(self,'initial_other_threads',[]),
             owner_thread_scope_complete=not self.errors,
@@ -237,3 +263,5 @@ class ExpertPlannerObserver:
             timing_limit='callback_seconds excludes dispatch/filter overhead and later JSON serialization; no native A/B equivalence claim',
             python_return_limit='return_or_unwind includes exception unwinds; None is never classified as a returned planner failure',
             formal_evidence_eligible=False)
+        if self.solver is not None:result['solver_contexts']=self.solver.contexts
+        return result
